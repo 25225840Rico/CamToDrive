@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
   const DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files";
   const DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink";
   const DB_NAME = "camtodrive-db";
@@ -298,6 +298,12 @@
   }
 
   async function getOrCreateFolderId() {
+    // Si hay una carpeta fija configurada, se usa esa directamente (scope drive completo).
+    const fixedFolderId = getAppConfig().FOLDER_ID;
+    if (fixedFolderId) {
+      return fixedFolderId;
+    }
+
     const storageKey = getFolderStorageKey();
     const cachedFolderId = localStorage.getItem(storageKey);
     if (cachedFolderId) {

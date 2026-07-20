@@ -24,10 +24,6 @@
     pendingCount: 0,
     uploadingCount: 0,
     authHintMessage: "",
-    cameraStream: null,
-    cameraStartPromise: null,
-    imageCapture: null,
-    cameraReady: false,
     cameraError: "",
     captureInProgress: false,
     lastThumbUrl: null,
@@ -52,9 +48,9 @@
     updateNetworkStatus();
     registerServiceWorker();
 
+    setCameraMessage("Toca Disparar para abrir la camara nativa trasera.");
     await refreshPendingCount();
     updateControls();
-    startCamera();
 
     if (!hasConfiguredClientId()) {
       setStatus("Conectar Google", "warning");
@@ -70,7 +66,7 @@
         callback: handleTokenResponse,
       });
       state.gisReady = true;
-      setStatus(state.cameraReady ? "Camara lista" : "Preparando camara");
+      setStatus("Camara nativa lista", "ok");
       clearHint();
     } catch (error) {
       console.error(error);
@@ -85,9 +81,6 @@
     elements.connectButton = document.getElementById("connectButton");
     elements.captureButton = document.getElementById("captureButton");
     elements.cameraInput = document.getElementById("cameraInput");
-    elements.fallbackCaptureButton = document.getElementById("fallbackCaptureButton");
-    elements.retryCameraButton = document.getElementById("retryCameraButton");
-    elements.cameraVideo = document.getElementById("cameraVideo");
     elements.cameraMessage = document.getElementById("cameraMessage");
     elements.statusText = document.getElementById("statusText");
     elements.pendingCount = document.getElementById("pendingCount");
@@ -101,9 +94,7 @@
 
   function bindEvents() {
     elements.connectButton.addEventListener("click", requestGoogleToken);
-    elements.captureButton.addEventListener("click", capturePhoto);
-    elements.fallbackCaptureButton.addEventListener("click", () => elements.cameraInput.click());
-    elements.retryCameraButton.addEventListener("click", () => startCamera({ force: true }));
+    elements.captureButton.addEventListener("click", openNativeCamera);
     elements.cameraInput.addEventListener("change", handleNativeCapture);
 
     window.addEventListener("online", () => {
@@ -120,18 +111,10 @@
     });
 
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) {
-        stopCamera();
-        return;
-      }
-
-      startCamera();
-      if (isAuthenticated()) {
+      if (!document.hidden && isAuthenticated()) {
         processPendingQueue();
       }
     });
-
-    window.addEventListener("pagehide", stopCamera);
   }
 
   function getAppConfig() {
@@ -190,7 +173,7 @@
     state.tokenExpiresAt = Date.now() + expiresInMs;
     scheduleTokenExpiry(expiresInMs);
 
-    setStatus(state.pendingCount > 0 ? "Subiendo cola..." : "Camara lista", "ok");
+    setStatus(state.pendingCount > 0 ? "Subiendo cola..." : "Camara nativa lista", "ok");
     setHint("Conectado a Google Drive con el scope Drive completo.");
     updateControls();
     await processPendingQueue();
@@ -230,252 +213,29 @@
     return Boolean(state.accessToken && Date.now() < state.tokenExpiresAt);
   }
 
-  async function startCamera(options = {}) {
-    const force = Boolean(options.force);
-    if (state.cameraStartPromise) {
-      return state.cameraStartPromise;
+  function openNativeCamera() {
+    if (state.captureInProgress) {
+      return;
     }
-    if (state.cameraReady && !force) {
-      return Promise.resolve();
-    }
-    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
-      showCameraError("Este navegador no permite camara en pagina. Usa el selector nativo.");
-      return Promise.resolve();
-    }
-
-    state.cameraStartPromise = doStartCamera(force).finally(() => {
-      state.cameraStartPromise = null;
-      updateControls();
-    });
-    updateControls();
-    return state.cameraStartPromise;
-  }
-
-  async function doStartCamera(force) {
-    if (force) {
-      stopCamera();
-    }
-
-    const hadCameraError = Boolean(state.cameraError);
-    state.cameraError = "";
-    state.cameraReady = false;
-    state.imageCapture = null;
-    setCameraMessage("Iniciando camara...");
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 4096 },
-          height: { ideal: 2160 },
-        },
-      });
-
-      stopCamera();
-      state.cameraStream = stream;
-      const track = stream.getVideoTracks()[0];
-      if (track) {
-        track.addEventListener("ended", handleCameraEnded);
-        await maximizeTrackResolution(track);
-        if (typeof ImageCapture === "function") {
-          try {
-            state.imageCapture = new ImageCapture(track);
-          } catch (error) {
-            console.warn("ImageCapture no disponible para este track", error);
-          }
-        }
-      }
-
-      elements.cameraVideo.srcObject = stream;
-      await elements.cameraVideo.play();
-      state.cameraReady = true;
-      state.cameraError = "";
-      if (hadCameraError) {
-        clearHint();
-      }
-      setCameraMessage(getCameraSettingsText());
-      if (!state.isProcessingQueue) {
-        setStatus("Camara lista", "ok");
-      }
+      elements.cameraInput.click();
     } catch (error) {
       console.error(error);
-      stopCamera();
-      showCameraError(getCameraErrorMessage(error));
+      showCameraError("No se pudo abrir la camara nativa. Toca Disparar otra vez.");
     }
-  }
-
-  async function maximizeTrackResolution(track) {
-    if (!track || typeof track.getCapabilities !== "function" || typeof track.applyConstraints !== "function") {
-      return;
-    }
-
-    const capabilities = track.getCapabilities();
-    const videoConstraints = {};
-    const advanced = [];
-
-    if (capabilities.width && capabilities.width.max) {
-      videoConstraints.width = { ideal: capabilities.width.max };
-      advanced.push({ width: capabilities.width.max });
-    }
-    if (capabilities.height && capabilities.height.max) {
-      videoConstraints.height = { ideal: capabilities.height.max };
-      advanced.push({ height: capabilities.height.max });
-    }
-
-    if (Object.keys(videoConstraints).length === 0) {
-      return;
-    }
-
-    try {
-      await track.applyConstraints({
-        ...videoConstraints,
-        advanced,
-      });
-    } catch (error) {
-      console.warn("No se pudo aplicar la resolucion maxima; se usa la otorgada.", error);
-    }
-  }
-
-  function stopCamera() {
-    if (state.cameraStream) {
-      state.cameraStream.getTracks().forEach((track) => track.stop());
-    }
-    state.cameraStream = null;
-    state.imageCapture = null;
-    state.cameraReady = false;
-    if (elements.cameraVideo) {
-      elements.cameraVideo.srcObject = null;
-    }
-  }
-
-  function handleCameraEnded() {
-    state.cameraReady = false;
-    state.imageCapture = null;
-    showCameraError("La camara se cerro. Puedes reintentar sin perder la cola.");
   }
 
   function showCameraError(message) {
     state.cameraError = message;
-    state.cameraReady = false;
-    state.imageCapture = null;
-    setStatus("Camara no disponible", "warning");
+    setStatus("Camara nativa no disponible", "warning");
     setCameraMessage(message);
     setHint(message);
     updateControls();
   }
 
-  function getCameraErrorMessage(error) {
-    if (error && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError")) {
-      return "Permiso de camara denegado. Habilitalo en el navegador y pulsa Reintentar.";
-    }
-    if (location.protocol !== "https:" && location.hostname !== "localhost") {
-      return "La camara en pagina requiere HTTPS. En GitHub Pages funciona con HTTPS.";
-    }
-    return "No se pudo abrir la camara. Puedes reintentar o usar el selector nativo.";
-  }
-
   function setCameraMessage(message) {
     elements.cameraMessage.textContent = message;
-  }
-
-  function getCameraSettingsText() {
-    const track = state.cameraStream && state.cameraStream.getVideoTracks()[0];
-    if (!track || typeof track.getSettings !== "function") {
-      return "Camara continua activa";
-    }
-
-    const settings = track.getSettings();
-    if (settings.width && settings.height) {
-      return `Camara continua activa (${settings.width} x ${settings.height})`;
-    }
-    return "Camara continua activa";
-  }
-
-  async function capturePhoto() {
-    if (!state.cameraReady || state.captureInProgress) {
-      return;
-    }
-
-    state.captureInProgress = true;
-    updateControls();
-
-    try {
-      const blob = await takePhotoBlob();
-      const fileName = makePhotoFileName(new Date());
-      await storeCapturedPhoto(blob, fileName, "Camara");
-    } catch (error) {
-      console.error(error);
-      setStatus("No se pudo capturar", "error");
-      setHint("Reintenta la foto. La cola existente no se modifico.");
-    } finally {
-      state.captureInProgress = false;
-      updateControls();
-    }
-  }
-
-  async function takePhotoBlob() {
-    if (state.imageCapture && typeof state.imageCapture.takePhoto === "function") {
-      try {
-        return await state.imageCapture.takePhoto();
-      } catch (error) {
-        console.warn("ImageCapture.takePhoto fallo; se usara canvas.", error);
-      }
-    }
-
-    return captureVideoFrameAsJpeg();
-  }
-
-  async function captureVideoFrameAsJpeg() {
-    const video = elements.cameraVideo;
-    await waitForVideoFrame(video);
-
-    const track = state.cameraStream && state.cameraStream.getVideoTracks()[0];
-    const settings = track && typeof track.getSettings === "function" ? track.getSettings() : {};
-    const width = settings.width || video.videoWidth;
-    const height = settings.height || video.videoHeight;
-
-    if (!width || !height) {
-      throw new Error("El video aun no entrega dimensiones.");
-    }
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    context.drawImage(video, 0, 0, width, height);
-
-    return new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (blob) {
-          resolve(blob);
-          return;
-        }
-        reject(new Error("No se pudo exportar la foto JPEG."));
-      }, "image/jpeg", 0.95);
-    });
-  }
-
-  function waitForVideoFrame(video) {
-    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth && video.videoHeight) {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve, reject) => {
-      const timer = window.setTimeout(() => {
-        cleanup();
-        reject(new Error("La camara no entrego imagen a tiempo."));
-      }, 5000);
-      const onLoaded = () => {
-        cleanup();
-        resolve();
-      };
-      const cleanup = () => {
-        window.clearTimeout(timer);
-        video.removeEventListener("loadeddata", onLoaded);
-      };
-      video.addEventListener("loadeddata", onLoaded, { once: true });
-    });
   }
 
   async function handleNativeCapture(event) {
@@ -486,13 +246,27 @@
       return;
     }
 
-    const fileName = makePhotoFileName(new Date());
-    await storeCapturedPhoto(file, fileName, "Selector nativo");
+    state.captureInProgress = true;
+    state.cameraError = "";
+    updateControls();
+
+    try {
+      const fileName = makePhotoFileName(new Date(), file);
+      await storeCapturedPhoto(file, fileName, "Camara nativa");
+      reopenNativeCameraBestEffort();
+    } catch (error) {
+      console.error(error);
+      setStatus("No se pudo encolar", "error");
+      setHint("Reintenta la foto. La cola existente no se modifico.");
+    } finally {
+      state.captureInProgress = false;
+      updateControls();
+    }
   }
 
-  async function storeCapturedPhoto(blob, fileName, sourceLabel) {
-    showThumbnail(blob);
-    const pendingId = await enqueuePhoto(blob, fileName);
+  async function storeCapturedPhoto(file, fileName, sourceLabel) {
+    showThumbnail(file);
+    const pendingId = await enqueuePhoto(file, fileName);
     addRecentPhoto({
       id: pendingId,
       fileName,
@@ -501,13 +275,25 @@
     });
     setQueuedStatus();
     setHint(isAuthenticated()
-      ? "Foto en cola; la subida sigue en segundo plano."
-      : "Foto guardada. Conecta Google para subir los pendientes.");
+      ? "Foto original en cola; la subida sigue en segundo plano."
+      : "Foto original guardada. Conecta Google para subir los pendientes.");
     updateControls();
 
     if (isAuthenticated()) {
       processPendingQueue();
     }
+  }
+
+  function reopenNativeCameraBestEffort() {
+    window.setTimeout(() => {
+      try {
+        if (!document.hidden && !state.captureInProgress) {
+          elements.cameraInput.click();
+        }
+      } catch (error) {
+        console.debug("El navegador bloqueo la reapertura automatica de la camara nativa.", error);
+      }
+    }, 0);
   }
 
   function showThumbnail(blob) {
@@ -597,12 +383,14 @@
   }
 
   async function sendMultipartUpload(folderId, blob, fileName) {
-    const mimeType = blob.type || "image/jpeg";
+    const mimeType = blob.type || "application/octet-stream";
     const metadata = {
       name: fileName,
-      mimeType,
       parents: [folderId],
     };
+    if (blob.type) {
+      metadata.mimeType = blob.type;
+    }
     const boundary = makeBoundary();
     const body = new Blob(
       [
@@ -731,8 +519,8 @@
     }
   }
 
-  async function enqueuePhoto(blob, fileName) {
-    const id = await addPendingPhoto(blob, fileName);
+  async function enqueuePhoto(file, fileName) {
+    const id = await addPendingPhoto(file, fileName);
     await refreshPendingCount();
     return id;
   }
@@ -762,7 +550,7 @@
       const pendingPhotos = await getPendingPhotos();
       const queue = pendingPhotos.slice();
       if (queue.length === 0) {
-        setStatus("Camara lista", "ok");
+        setStatus("Camara nativa lista", "ok");
         return;
       }
       const workerCount = Math.min(UPLOAD_CONCURRENCY, queue.length);
@@ -809,7 +597,7 @@
         setHint("Hay pendientes; se reintentara con backoff cuando haya conexion.");
       } else if (uploadedCount > 0) {
         setStatus("Fotos subidas", "ok");
-        setHint("Las fotos pendientes quedaron guardadas en Google Drive.");
+        setHint("Las fotos originales pendientes quedaron guardadas en Google Drive.");
       }
     } finally {
       state.isProcessingQueue = false;
@@ -876,14 +664,15 @@
     return dbPromise;
   }
 
-  async function addPendingPhoto(blob, fileName) {
+  async function addPendingPhoto(file, fileName) {
     const db = await openDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
       const request = tx.objectStore(STORE_NAME).add({
-        blob,
+        blob: file,
         fileName,
-        type: blob.type || "image/jpeg",
+        type: file.type || "",
+        originalName: file.name || "",
         createdAt: Date.now(),
       });
 
@@ -929,7 +718,7 @@
     updateControls();
   }
 
-  function makePhotoFileName(date) {
+  function makePhotoFileName(date, file) {
     const pad = (value, size = 2) => String(value).padStart(size, "0");
     return [
       date.getFullYear(),
@@ -940,7 +729,33 @@
       pad(date.getMinutes()),
       pad(date.getSeconds()),
       pad(date.getMilliseconds(), 3),
-    ].join("-") + ".jpg";
+    ].join("-") + getFileExtension(file);
+  }
+
+  function getFileExtension(file) {
+    const mimeType = (file && file.type ? file.type : "").toLowerCase();
+    const extensionsByMimeType = {
+      "image/jpeg": ".jpg",
+      "image/pjpeg": ".jpg",
+      "image/heic": ".heic",
+      "image/heif": ".heif",
+      "image/png": ".png",
+      "image/webp": ".webp",
+      "image/gif": ".gif",
+      "image/bmp": ".bmp",
+      "image/tiff": ".tif",
+      "image/avif": ".avif",
+      "image/svg+xml": ".svg",
+      "image/x-adobe-dng": ".dng",
+    };
+
+    if (extensionsByMimeType[mimeType]) {
+      return extensionsByMimeType[mimeType];
+    }
+
+    const fileName = file && file.name ? file.name : "";
+    const extension = fileName.match(/\.[a-z0-9]{1,8}$/i);
+    return extension ? extension[0].toLowerCase() : ".img";
   }
 
   function makeBoundary() {
@@ -971,7 +786,7 @@
     if (count > 0 || state.uploadingCount > 0) {
       setStatus(`En cola (${count} ${count === 1 ? "pendiente" : "pendientes"})`, "warning");
     } else {
-      setStatus("Camara lista", "ok");
+      setStatus("Camara nativa lista", "ok");
     }
   }
 
@@ -995,9 +810,7 @@
 
     elements.connectButton.disabled = !configured || !state.gisReady;
     elements.connectButton.hidden = authenticated;
-    elements.captureButton.disabled = !state.cameraReady || state.captureInProgress;
-    elements.fallbackCaptureButton.hidden = !state.cameraError;
-    elements.retryCameraButton.hidden = !state.cameraError;
+    elements.captureButton.disabled = state.captureInProgress;
     elements.pendingCount.textContent = String(state.pendingCount);
     elements.uploadingCount.textContent = String(state.uploadingCount);
     elements.authHint.textContent = state.authHintMessage || getDefaultHint(configured, authenticated);
@@ -1010,19 +823,19 @@
     if (!state.gisReady) {
       return "Cargando Google Identity Services...";
     }
-    if (!state.cameraReady && !state.cameraError) {
-      return "Preparando camara...";
+    if (state.cameraError) {
+      return state.cameraError;
     }
     if (authenticated && state.pendingCount > 0) {
       return "Los pendientes se subiran automaticamente con conexion.";
     }
     if (authenticated) {
-      return "Listo para tomar fotos y subirlas a Drive.";
+      return "Listo para tomar fotos nativas y subirlas a Drive.";
     }
     if (state.pendingCount > 0) {
       return "Conecta Google para subir pendientes.";
     }
-    return "Puedes tomar fotos ahora; conecta Google para subirlas.";
+    return "Toca Disparar para abrir la camara nativa trasera.";
   }
 
   function updateNetworkStatus() {
@@ -1043,4 +856,3 @@
     });
   }
 })();
-

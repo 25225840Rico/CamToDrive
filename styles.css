@@ -64,7 +64,7 @@ button {
   margin: 0 auto;
   padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem max(1rem, env(safe-area-inset-bottom));
   display: grid;
-  grid-template-rows: auto auto minmax(18rem, 1fr) auto auto auto;
+  grid-template-rows: auto auto auto auto auto;
   gap: 0.75rem;
 }
 
@@ -187,54 +187,60 @@ h1 {
   font-weight: 750;
 }
 
-.camera-panel {
-  min-height: 18rem;
+.native-panel {
+  min-height: 12rem;
+  padding: 1.25rem;
   border: 1px solid var(--line);
   border-radius: 8px;
-  overflow: hidden;
-  position: relative;
-  background: #05070a;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.8rem;
+  background: var(--surface);
   box-shadow: var(--shadow);
+  text-align: center;
 }
 
-.camera-panel video {
-  width: 100%;
-  height: 100%;
-  min-height: 18rem;
-  display: block;
-  object-fit: cover;
-  background: #05070a;
-}
-
-.camera-overlay {
-  min-height: 3rem;
-  padding: 0.6rem 0.7rem;
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  color: #ffffff;
-  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.72));
-}
-
-.camera-overlay p {
-  min-width: 0;
+.native-panel p {
+  max-width: 22rem;
   margin: 0;
-  overflow-wrap: anywhere;
-  font-size: 0.82rem;
+  color: var(--muted);
+  font-size: 1rem;
   font-weight: 750;
+  line-height: 1.35;
 }
 
-.camera-fallback-actions {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 0.45rem;
+.native-camera-icon {
+  width: 4.6rem;
+  height: 3.6rem;
+  border: 0.32rem solid var(--primary);
+  border-radius: 8px;
+  position: relative;
 }
 
+.native-camera-icon::before {
+  content: "";
+  width: 1.4rem;
+  height: 0.7rem;
+  border-radius: 0.4rem 0.4rem 0 0;
+  background: var(--primary);
+  position: absolute;
+  left: 50%;
+  top: -1rem;
+  transform: translateX(-50%);
+}
+
+.native-camera-icon::after {
+  content: "";
+  width: 1.55rem;
+  height: 1.55rem;
+  border: 0.26rem solid var(--accent);
+  border-radius: 50%;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
 .actions {
   display: grid;
   gap: 0.7rem;
@@ -453,9 +459,8 @@ h1 {
     padding-bottom: 1.25rem;
   }
 
-  .camera-panel,
-  .camera-panel video {
-    min-height: 24rem;
+  .native-panel {
+    min-height: 14rem;
   }
 }
 

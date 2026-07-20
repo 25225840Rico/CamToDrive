@@ -44,15 +44,9 @@
         </div>
       </section>
 
-      <section class="camera-panel" aria-label="Camara continua">
-        <video id="cameraVideo" autoplay muted playsinline></video>
-        <div class="camera-overlay">
-          <p id="cameraMessage">Preparando camara...</p>
-          <div class="camera-fallback-actions">
-            <button class="secondary-button" id="retryCameraButton" type="button" hidden>Reintentar</button>
-            <button class="secondary-button" id="fallbackCaptureButton" type="button" hidden>Usar camara nativa</button>
-          </div>
-        </div>
+      <section class="native-panel" aria-label="Captura nativa">
+        <div class="native-camera-icon" aria-hidden="true"></div>
+        <p id="cameraMessage">Toca Disparar para abrir la camara nativa trasera.</p>
       </section>
 
       <section class="actions" aria-label="Acciones principales">

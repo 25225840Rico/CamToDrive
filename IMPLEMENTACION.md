@@ -4,27 +4,25 @@ CamToDrive sigue siendo una web app estatica sin backend, frameworks ni build st
 
 ## Cambios de este encargo
 
-- Se reemplazo el flujo principal de `<input type="file" capture>` por una camara continua en pagina con `getUserMedia`, video `playsinline`/`muted` para iOS y preferencia por camara trasera.
-- La app pide 4096x2160 como resolucion ideal y, cuando el navegador expone capacidades del track, intenta aplicar la resolucion maxima soportada.
-- La captura usa `ImageCapture.takePhoto()` cuando esta disponible. Si falla o no existe, usa el frame nativo del video en canvas y exporta JPEG con calidad 0.95.
-- Cada disparo se guarda primero en IndexedDB y la subida a Drive se procesa en segundo plano, por lo que la camara queda abierta para seguir disparando.
-- La cola de pendientes ahora sube con concurrencia limitada a 3 fotos y reintentos con backoff antes de dejar la foto pendiente.
-- Se agregaron indicadores de pendientes, subidas activas, miniatura de la ultima foto y estado de los disparos recientes (`En cola`, `Subiendo`, `OK`, `Pendiente`).
-- Se mantiene el boton `Conectar Google`, el scope `https://www.googleapis.com/auth/drive`, `FOLDER_ID` fijo de `config.js` y el manejo de expiracion/reconexion del token.
-- Si la camara en pagina falla o el permiso es denegado, la UI muestra un mensaje claro, boton de reintento y fallback al input nativo con `capture="environment"`.
-- Al ocultar la app se libera el stream de camara; al volver visible se intenta adquirir de nuevo y se reanuda el procesamiento de cola si hay Google conectado.
-- Se corrigio la incoherencia de `authHint`: `updateControls()` ya no pisa mensajes especificos de estado y usa un hint por defecto solo cuando no hay uno explicito.
-- Los nombres de archivo ahora incluyen milisegundos: `AAAA-MM-DD_HH-MM-SS-mmm.jpg`.
-- Se actualizo la version del cache del service worker para refrescar el shell estatico.
+- La captura vuelve a ser 100% nativa con `<input type="file" accept="image/*" capture="environment">` para abrir la camara trasera del sistema.
+- Se elimino por completo la captura en pagina: no hay stream de camara, visor embebido, APIs de captura por frame, redimensionado, recomposicion ni parametros de calidad.
+- El archivo que entrega la camara se trata como fuente unica de verdad: el `File` original se guarda directamente en IndexedDB y ese mismo blob se sube a Google Drive.
+- No se recomprime, no se recodifica, no se cambia formato, no se eliminan metadatos y no se fuerza JPEG. Si el iPhone entrega HEIC, se sube HEIC; si entrega JPEG, se sube JPEG.
+- Los nombres de archivo usan timestamp con milisegundos y extension derivada del MIME real: `AAAA-MM-DD_HH-MM-SS-mmm.ext`.
+- La subida sigue en segundo plano con la cola existente, concurrencia limitada a 3 fotos y reintentos con backoff. Tomar otra foto no espera a que terminen las subidas.
+- Tras recibir una foto, la app intenta reabrir la camara nativa como best-effort. Si el navegador lo bloquea, el boton `Disparar` queda listo para un toque inmediato.
+- Se mantienen el boton `Conectar Google`, el scope `https://www.googleapis.com/auth/drive`, `CLIENT_ID`, `FOLDER_ID` y `FOLDER_NAME` de `config.js`.
+- Se actualizaron los textos y estilos para reflejar captura nativa, no visor continuo.
+- Se subio la version del cache del service worker a `camtodrive-shell-v3` para refrescar el shell estatico.
 
 ## Archivos principales
 
-- `index.html`: estructura de una pagina con visor de camara continuo, botones de conexion/captura, fallback nativo, contadores y lista de disparos recientes.
+- `index.html`: estructura de una pagina con boton de disparo nativo, input file/capture, contadores y lista de disparos recientes.
 - `config.js`: constantes `CLIENT_ID`, `FOLDER_ID` y `FOLDER_NAME` configurables.
-- `app.js`: autenticacion con Google Identity Services, captura continua, cola IndexedDB, subida multipart a Drive, concurrencia limitada, reintentos y control de permisos/ciclo de vida de camara.
-- `styles.css`: interfaz mobile-first con visor principal, botones grandes, estados de cola y modo claro/oscuro.
+- `app.js`: autenticacion con Google Identity Services, captura nativa por `File`, cola IndexedDB, subida multipart a Drive, concurrencia limitada, reintentos y reconexion.
+- `styles.css`: interfaz mobile-first con accion de disparo grande, panel de captura nativa, estados de cola y modo claro/oscuro.
 - `manifest.webmanifest`: manifest PWA con scope/start URL relativos.
-- `service-worker.js`: cache del shell estatico con version actualizada.
+- `service-worker.js`: cache del shell estatico version v3.
 - `icons/`: iconos SVG y PNG para PWA y `apple-touch-icon`.
 
 ## Pendiente para el usuario

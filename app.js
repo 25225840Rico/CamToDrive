@@ -8,6 +8,9 @@
   const DB_VERSION = 1;
   const STORE_NAME = "pendingPhotos";
   const TOKEN_SAFETY_MS = 30 * 1000;
+  const UPLOAD_CONCURRENCY = 3;
+  const MAX_UPLOAD_ATTEMPTS = 3;
+  const RETRY_BASE_DELAY_MS = 1200;
 
   const elements = {};
   const state = {
@@ -16,10 +19,19 @@
     tokenExpiresAt: 0,
     tokenExpiryTimer: null,
     gisReady: false,
-    isUploading: false,
     isProcessingQueue: false,
+    queueProcessRequested: false,
     pendingCount: 0,
+    uploadingCount: 0,
+    authHintMessage: "",
+    cameraStream: null,
+    cameraStartPromise: null,
+    imageCapture: null,
+    cameraReady: false,
+    cameraError: "",
+    captureInProgress: false,
     lastThumbUrl: null,
+    recentPhotos: [],
   };
 
   let dbPromise = null;
@@ -36,16 +48,17 @@
   async function init() {
     cacheElements();
     bindEvents();
+    renderRecentPhotos();
     updateNetworkStatus();
     registerServiceWorker();
 
     await refreshPendingCount();
     updateControls();
+    startCamera();
 
     if (!hasConfiguredClientId()) {
       setStatus("Conectar Google", "warning");
-      elements.authHint.textContent = "Reemplaza el CLIENT_ID en config.js antes de conectar Google.";
-      updateControls();
+      setHint("Reemplaza el CLIENT_ID en config.js antes de conectar Google.");
       return;
     }
 
@@ -57,11 +70,12 @@
         callback: handleTokenResponse,
       });
       state.gisReady = true;
-      setStatus("Conectar Google");
+      setStatus(state.cameraReady ? "Camara lista" : "Preparando camara");
+      clearHint();
     } catch (error) {
       console.error(error);
       setStatus("No se pudo cargar Google", "error");
-      elements.authHint.textContent = "Revisa la conexion y recarga la app.";
+      setHint("Revisa la conexion y recarga la app.");
     }
 
     updateControls();
@@ -71,32 +85,53 @@
     elements.connectButton = document.getElementById("connectButton");
     elements.captureButton = document.getElementById("captureButton");
     elements.cameraInput = document.getElementById("cameraInput");
+    elements.fallbackCaptureButton = document.getElementById("fallbackCaptureButton");
+    elements.retryCameraButton = document.getElementById("retryCameraButton");
+    elements.cameraVideo = document.getElementById("cameraVideo");
+    elements.cameraMessage = document.getElementById("cameraMessage");
     elements.statusText = document.getElementById("statusText");
     elements.pendingCount = document.getElementById("pendingCount");
+    elements.uploadingCount = document.getElementById("uploadingCount");
     elements.networkStatus = document.getElementById("networkStatus");
     elements.lastThumb = document.getElementById("lastThumb");
     elements.emptyThumb = document.getElementById("emptyThumb");
     elements.authHint = document.getElementById("authHint");
+    elements.recentList = document.getElementById("recentList");
   }
 
   function bindEvents() {
     elements.connectButton.addEventListener("click", requestGoogleToken);
-    elements.captureButton.addEventListener("click", () => elements.cameraInput.click());
-    elements.cameraInput.addEventListener("change", handleCameraChange);
+    elements.captureButton.addEventListener("click", capturePhoto);
+    elements.fallbackCaptureButton.addEventListener("click", () => elements.cameraInput.click());
+    elements.retryCameraButton.addEventListener("click", () => startCamera({ force: true }));
+    elements.cameraInput.addEventListener("change", handleNativeCapture);
 
-    window.addEventListener("online", async () => {
+    window.addEventListener("online", () => {
       updateNetworkStatus();
       if (isAuthenticated()) {
-        await processPendingQueue();
-      }
-    });
-
-    window.addEventListener("offline", updateNetworkStatus);
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden && isAuthenticated()) {
         processPendingQueue();
       }
     });
+
+    window.addEventListener("offline", () => {
+      updateNetworkStatus();
+      setQueuedStatus();
+      setHint("Sin conexion: las fotos quedan guardadas y se subiran despues.");
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        stopCamera();
+        return;
+      }
+
+      startCamera();
+      if (isAuthenticated()) {
+        processPendingQueue();
+      }
+    });
+
+    window.addEventListener("pagehide", stopCamera);
   }
 
   function getAppConfig() {
@@ -135,7 +170,7 @@
     }
 
     setStatus("Conectar Google");
-    elements.authHint.textContent = "Esperando autorizacion de Google...";
+    setHint("Esperando autorizacion de Google...");
     state.tokenClient.callback = handleTokenResponse;
     state.tokenClient.requestAccessToken({ prompt: state.accessToken ? "" : "consent" });
   }
@@ -145,7 +180,7 @@
       console.error("Error OAuth", response);
       clearAuth(false);
       setStatus("Conectar Google", "error");
-      elements.authHint.textContent = "No se completo la conexion con Google.";
+      setHint("No se completo la conexion con Google.");
       updateControls();
       return;
     }
@@ -155,8 +190,8 @@
     state.tokenExpiresAt = Date.now() + expiresInMs;
     scheduleTokenExpiry(expiresInMs);
 
-    setStatus("Tomar foto", "ok");
-    elements.authHint.textContent = "Conectado a Google Drive con el scope drive.file.";
+    setStatus(state.pendingCount > 0 ? "Subiendo cola..." : "Camara lista", "ok");
+    setHint("Conectado a Google Drive con el scope Drive completo.");
     updateControls();
     await processPendingQueue();
   }
@@ -170,10 +205,10 @@
       clearAuth(false);
       if (state.pendingCount > 0) {
         setQueuedStatus();
-        elements.authHint.textContent = "Reconecta Google para continuar con los pendientes.";
+        setHint("Reconecta Google para continuar con los pendientes.");
       } else {
         setStatus("Conectar Google", "warning");
-        elements.authHint.textContent = "La sesion expiro. Conecta Google otra vez.";
+        setHint("La sesion expiro. Conecta Google otra vez.");
       }
       updateControls();
     }, Math.max(1000, expiresInMs));
@@ -195,7 +230,255 @@
     return Boolean(state.accessToken && Date.now() < state.tokenExpiresAt);
   }
 
-  async function handleCameraChange(event) {
+  async function startCamera(options = {}) {
+    const force = Boolean(options.force);
+    if (state.cameraStartPromise) {
+      return state.cameraStartPromise;
+    }
+    if (state.cameraReady && !force) {
+      return Promise.resolve();
+    }
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      showCameraError("Este navegador no permite camara en pagina. Usa el selector nativo.");
+      return Promise.resolve();
+    }
+
+    state.cameraStartPromise = doStartCamera(force).finally(() => {
+      state.cameraStartPromise = null;
+      updateControls();
+    });
+    updateControls();
+    return state.cameraStartPromise;
+  }
+
+  async function doStartCamera(force) {
+    if (force) {
+      stopCamera();
+    }
+
+    const hadCameraError = Boolean(state.cameraError);
+    state.cameraError = "";
+    state.cameraReady = false;
+    state.imageCapture = null;
+    setCameraMessage("Iniciando camara...");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 4096 },
+          height: { ideal: 2160 },
+        },
+      });
+
+      stopCamera();
+      state.cameraStream = stream;
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        track.addEventListener("ended", handleCameraEnded);
+        await maximizeTrackResolution(track);
+        if (typeof ImageCapture === "function") {
+          try {
+            state.imageCapture = new ImageCapture(track);
+          } catch (error) {
+            console.warn("ImageCapture no disponible para este track", error);
+          }
+        }
+      }
+
+      elements.cameraVideo.srcObject = stream;
+      await elements.cameraVideo.play();
+      state.cameraReady = true;
+      state.cameraError = "";
+      if (hadCameraError) {
+        clearHint();
+      }
+      setCameraMessage(getCameraSettingsText());
+      if (!state.isProcessingQueue) {
+        setStatus("Camara lista", "ok");
+      }
+    } catch (error) {
+      console.error(error);
+      stopCamera();
+      showCameraError(getCameraErrorMessage(error));
+    }
+  }
+
+  async function maximizeTrackResolution(track) {
+    if (!track || typeof track.getCapabilities !== "function" || typeof track.applyConstraints !== "function") {
+      return;
+    }
+
+    const capabilities = track.getCapabilities();
+    const videoConstraints = {};
+    const advanced = [];
+
+    if (capabilities.width && capabilities.width.max) {
+      videoConstraints.width = { ideal: capabilities.width.max };
+      advanced.push({ width: capabilities.width.max });
+    }
+    if (capabilities.height && capabilities.height.max) {
+      videoConstraints.height = { ideal: capabilities.height.max };
+      advanced.push({ height: capabilities.height.max });
+    }
+
+    if (Object.keys(videoConstraints).length === 0) {
+      return;
+    }
+
+    try {
+      await track.applyConstraints({
+        ...videoConstraints,
+        advanced,
+      });
+    } catch (error) {
+      console.warn("No se pudo aplicar la resolucion maxima; se usa la otorgada.", error);
+    }
+  }
+
+  function stopCamera() {
+    if (state.cameraStream) {
+      state.cameraStream.getTracks().forEach((track) => track.stop());
+    }
+    state.cameraStream = null;
+    state.imageCapture = null;
+    state.cameraReady = false;
+    if (elements.cameraVideo) {
+      elements.cameraVideo.srcObject = null;
+    }
+  }
+
+  function handleCameraEnded() {
+    state.cameraReady = false;
+    state.imageCapture = null;
+    showCameraError("La camara se cerro. Puedes reintentar sin perder la cola.");
+  }
+
+  function showCameraError(message) {
+    state.cameraError = message;
+    state.cameraReady = false;
+    state.imageCapture = null;
+    setStatus("Camara no disponible", "warning");
+    setCameraMessage(message);
+    setHint(message);
+    updateControls();
+  }
+
+  function getCameraErrorMessage(error) {
+    if (error && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError")) {
+      return "Permiso de camara denegado. Habilitalo en el navegador y pulsa Reintentar.";
+    }
+    if (location.protocol !== "https:" && location.hostname !== "localhost") {
+      return "La camara en pagina requiere HTTPS. En GitHub Pages funciona con HTTPS.";
+    }
+    return "No se pudo abrir la camara. Puedes reintentar o usar el selector nativo.";
+  }
+
+  function setCameraMessage(message) {
+    elements.cameraMessage.textContent = message;
+  }
+
+  function getCameraSettingsText() {
+    const track = state.cameraStream && state.cameraStream.getVideoTracks()[0];
+    if (!track || typeof track.getSettings !== "function") {
+      return "Camara continua activa";
+    }
+
+    const settings = track.getSettings();
+    if (settings.width && settings.height) {
+      return `Camara continua activa (${settings.width} x ${settings.height})`;
+    }
+    return "Camara continua activa";
+  }
+
+  async function capturePhoto() {
+    if (!state.cameraReady || state.captureInProgress) {
+      return;
+    }
+
+    state.captureInProgress = true;
+    updateControls();
+
+    try {
+      const blob = await takePhotoBlob();
+      const fileName = makePhotoFileName(new Date());
+      await storeCapturedPhoto(blob, fileName, "Camara");
+    } catch (error) {
+      console.error(error);
+      setStatus("No se pudo capturar", "error");
+      setHint("Reintenta la foto. La cola existente no se modifico.");
+    } finally {
+      state.captureInProgress = false;
+      updateControls();
+    }
+  }
+
+  async function takePhotoBlob() {
+    if (state.imageCapture && typeof state.imageCapture.takePhoto === "function") {
+      try {
+        return await state.imageCapture.takePhoto();
+      } catch (error) {
+        console.warn("ImageCapture.takePhoto fallo; se usara canvas.", error);
+      }
+    }
+
+    return captureVideoFrameAsJpeg();
+  }
+
+  async function captureVideoFrameAsJpeg() {
+    const video = elements.cameraVideo;
+    await waitForVideoFrame(video);
+
+    const track = state.cameraStream && state.cameraStream.getVideoTracks()[0];
+    const settings = track && typeof track.getSettings === "function" ? track.getSettings() : {};
+    const width = settings.width || video.videoWidth;
+    const height = settings.height || video.videoHeight;
+
+    if (!width || !height) {
+      throw new Error("El video aun no entrega dimensiones.");
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    context.drawImage(video, 0, 0, width, height);
+
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+        reject(new Error("No se pudo exportar la foto JPEG."));
+      }, "image/jpeg", 0.95);
+    });
+  }
+
+  function waitForVideoFrame(video) {
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth && video.videoHeight) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("La camara no entrego imagen a tiempo."));
+      }, 5000);
+      const onLoaded = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        video.removeEventListener("loadeddata", onLoaded);
+      };
+      video.addEventListener("loadeddata", onLoaded, { once: true });
+    });
+  }
+
+  async function handleNativeCapture(event) {
     const file = event.target.files && event.target.files[0];
     event.target.value = "";
 
@@ -203,51 +486,97 @@
       return;
     }
 
-    showThumbnail(file);
     const fileName = makePhotoFileName(new Date());
+    await storeCapturedPhoto(file, fileName, "Selector nativo");
+  }
 
-    if (!isAuthenticated()) {
-      await enqueuePhoto(file, fileName);
-      clearAuth(false);
-      setQueuedStatus();
-      elements.authHint.textContent = "Conecta Google para subir la foto pendiente.";
-      updateControls();
-      return;
-    }
-
-    state.isUploading = true;
-    setStatus("Subiendo...");
+  async function storeCapturedPhoto(blob, fileName, sourceLabel) {
+    showThumbnail(blob);
+    const pendingId = await enqueuePhoto(blob, fileName);
+    addRecentPhoto({
+      id: pendingId,
+      fileName,
+      status: "queued",
+      label: sourceLabel,
+    });
+    setQueuedStatus();
+    setHint(isAuthenticated()
+      ? "Foto en cola; la subida sigue en segundo plano."
+      : "Foto guardada. Conecta Google para subir los pendientes.");
     updateControls();
 
-    try {
-      await uploadPhotoToDrive(file, fileName);
-      setStatus("✓ Subida OK", "ok");
-      elements.authHint.textContent = "La foto quedo guardada en Google Drive.";
-    } catch (error) {
-      console.error(error);
-      if (error instanceof AuthExpiredError) {
-        clearAuth(false);
-      }
-      await enqueuePhoto(file, fileName);
-      setQueuedStatus();
-      elements.authHint.textContent = error instanceof AuthExpiredError
-        ? "Reconecta Google para subir la foto pendiente."
-        : "La foto se subira automaticamente cuando vuelva la red.";
-    } finally {
-      state.isUploading = false;
-      updateControls();
+    if (isAuthenticated()) {
+      processPendingQueue();
     }
   }
 
-  function showThumbnail(file) {
+  function showThumbnail(blob) {
     if (state.lastThumbUrl) {
       URL.revokeObjectURL(state.lastThumbUrl);
     }
 
-    state.lastThumbUrl = URL.createObjectURL(file);
+    state.lastThumbUrl = URL.createObjectURL(blob);
     elements.lastThumb.src = state.lastThumbUrl;
     elements.lastThumb.hidden = false;
     elements.emptyThumb.hidden = true;
+  }
+
+  function addRecentPhoto(photo) {
+    state.recentPhotos.unshift(photo);
+    state.recentPhotos = state.recentPhotos.slice(0, 6);
+    renderRecentPhotos();
+  }
+
+  function updateRecentPhoto(id, status) {
+    const photo = state.recentPhotos.find((item) => item.id === id);
+    if (photo) {
+      photo.status = status;
+      renderRecentPhotos();
+    }
+  }
+
+  function renderRecentPhotos() {
+    if (!elements.recentList) {
+      return;
+    }
+
+    elements.recentList.replaceChildren();
+    if (state.recentPhotos.length === 0) {
+      const item = document.createElement("li");
+      item.className = "recent-empty";
+      item.textContent = "Sin disparos recientes";
+      elements.recentList.appendChild(item);
+      return;
+    }
+
+    state.recentPhotos.forEach((photo) => {
+      const item = document.createElement("li");
+      item.className = `recent-item ${photo.status}`;
+
+      const name = document.createElement("span");
+      name.className = "recent-name";
+      name.textContent = photo.fileName;
+
+      const badge = document.createElement("span");
+      badge.className = "recent-badge";
+      badge.textContent = getRecentStatusText(photo.status);
+
+      item.append(name, badge);
+      elements.recentList.appendChild(item);
+    });
+  }
+
+  function getRecentStatusText(status) {
+    if (status === "uploading") {
+      return "Subiendo";
+    }
+    if (status === "done") {
+      return "OK";
+    }
+    if (status === "error") {
+      return "Pendiente";
+    }
+    return "En cola";
   }
 
   async function uploadPhotoToDrive(blob, fileName) {
@@ -298,7 +627,7 @@
   }
 
   async function getOrCreateFolderId() {
-    // Si hay una carpeta fija configurada, se usa esa directamente (scope drive completo).
+    // Si hay una carpeta fija configurada, se usa directo para todos los usuarios autorizados.
     const fixedFolderId = getAppConfig().FOLDER_ID;
     if (fixedFolderId) {
       return fixedFolderId;
@@ -403,46 +732,123 @@
   }
 
   async function enqueuePhoto(blob, fileName) {
-    await addPendingPhoto(blob, fileName);
+    const id = await addPendingPhoto(blob, fileName);
     await refreshPendingCount();
+    return id;
   }
 
   async function processPendingQueue() {
-    if (state.isProcessingQueue || !navigator.onLine || !isAuthenticated()) {
+    if (state.isProcessingQueue) {
+      state.queueProcessRequested = true;
       await refreshPendingCount();
+      return;
+    }
+    if (!navigator.onLine || !isAuthenticated()) {
+      await refreshPendingCount();
+      updateControls();
       return;
     }
 
     state.isProcessingQueue = true;
+    state.queueProcessRequested = false;
+    setStatus("Subiendo cola...");
     updateControls();
+
+    let uploadedCount = 0;
+    let failedCount = 0;
+    let authFailed = false;
 
     try {
       const pendingPhotos = await getPendingPhotos();
-      for (const photo of pendingPhotos) {
-        setStatus("Subiendo...");
-        await uploadPhotoToDrive(photo.blob, photo.fileName);
-        await deletePendingPhoto(photo.id);
-        await refreshPendingCount();
+      const queue = pendingPhotos.slice();
+      if (queue.length === 0) {
+        setStatus("Camara lista", "ok");
+        return;
       }
+      const workerCount = Math.min(UPLOAD_CONCURRENCY, queue.length);
 
-      if (pendingPhotos.length > 0) {
-        setStatus("✓ Subida OK", "ok");
-        elements.authHint.textContent = "Se subieron las fotos pendientes.";
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (queue.length > 0 && !authFailed && navigator.onLine) {
+          const photo = queue.shift();
+          updateRecentPhoto(photo.id, "uploading");
+          state.uploadingCount += 1;
+          updateControls();
+
+          try {
+            await uploadWithRetries(photo);
+            await deletePendingPhoto(photo.id);
+            uploadedCount += 1;
+            updateRecentPhoto(photo.id, "done");
+            await refreshPendingCount();
+          } catch (error) {
+            console.error(error);
+            if (error instanceof AuthExpiredError) {
+              authFailed = true;
+              clearAuth(false);
+            } else {
+              failedCount += 1;
+              updateRecentPhoto(photo.id, "error");
+            }
+          } finally {
+            state.uploadingCount = Math.max(0, state.uploadingCount - 1);
+            updateControls();
+          }
+        }
+      });
+
+      await Promise.all(workers);
+
+      if (authFailed) {
+        setQueuedStatus();
+        setHint("Reconecta Google para subir pendientes.");
+      } else if (!navigator.onLine) {
+        setQueuedStatus();
+        setHint("Sin conexion: se reintentara automaticamente.");
+      } else if (failedCount > 0) {
+        setQueuedStatus();
+        setHint("Hay pendientes; se reintentara con backoff cuando haya conexion.");
+      } else if (uploadedCount > 0) {
+        setStatus("Fotos subidas", "ok");
+        setHint("Las fotos pendientes quedaron guardadas en Google Drive.");
       }
-    } catch (error) {
-      console.error(error);
-      if (error instanceof AuthExpiredError) {
-        clearAuth(false);
-        elements.authHint.textContent = "Reconecta Google para subir pendientes.";
-      } else {
-        elements.authHint.textContent = "Hay pendientes; se reintentara cuando vuelva la red.";
-      }
-      setQueuedStatus();
     } finally {
       state.isProcessingQueue = false;
       await refreshPendingCount();
       updateControls();
+
+      if (state.queueProcessRequested && navigator.onLine && isAuthenticated()) {
+        state.queueProcessRequested = false;
+        window.setTimeout(processPendingQueue, 0);
+      }
     }
+  }
+
+  async function uploadWithRetries(photo) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= MAX_UPLOAD_ATTEMPTS; attempt += 1) {
+      try {
+        await uploadPhotoToDrive(photo.blob, photo.fileName);
+        return;
+      } catch (error) {
+        if (error instanceof AuthExpiredError) {
+          throw error;
+        }
+        lastError = error;
+        if (!navigator.onLine) {
+          break;
+        }
+        if (attempt < MAX_UPLOAD_ATTEMPTS) {
+          await delay(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+        }
+      }
+    }
+    throw lastError || new Error("No se pudo subir la foto.");
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
   }
 
   function openDb() {
@@ -520,11 +926,11 @@
       request.onsuccess = () => resolve(request.result || 0);
       request.onerror = () => reject(request.error);
     });
-    elements.pendingCount.textContent = String(state.pendingCount);
+    updateControls();
   }
 
   function makePhotoFileName(date) {
-    const pad = (value) => String(value).padStart(2, "0");
+    const pad = (value, size = 2) => String(value).padStart(size, "0");
     return [
       date.getFullYear(),
       pad(date.getMonth() + 1),
@@ -533,6 +939,7 @@
       pad(date.getHours()),
       pad(date.getMinutes()),
       pad(date.getSeconds()),
+      pad(date.getMilliseconds(), 3),
     ].join("-") + ".jpg";
   }
 
@@ -561,31 +968,61 @@
 
   function setQueuedStatus() {
     const count = state.pendingCount;
-    setStatus(`⚠ En cola (${count} ${count === 1 ? "pendiente" : "pendientes"})`, "warning");
+    if (count > 0 || state.uploadingCount > 0) {
+      setStatus(`En cola (${count} ${count === 1 ? "pendiente" : "pendientes"})`, "warning");
+    } else {
+      setStatus("Camara lista", "ok");
+    }
+  }
+
+  function setHint(message) {
+    state.authHintMessage = message;
+    updateControls();
+  }
+
+  function clearHint() {
+    state.authHintMessage = "";
+    updateControls();
   }
 
   function updateControls() {
+    if (!elements.connectButton) {
+      return;
+    }
+
     const configured = hasConfiguredClientId();
     const authenticated = isAuthenticated();
-    const busy = state.isUploading || state.isProcessingQueue;
 
-    elements.connectButton.disabled = !configured || !state.gisReady || busy;
+    elements.connectButton.disabled = !configured || !state.gisReady;
     elements.connectButton.hidden = authenticated;
-    elements.captureButton.disabled = !authenticated || busy;
+    elements.captureButton.disabled = !state.cameraReady || state.captureInProgress;
+    elements.fallbackCaptureButton.hidden = !state.cameraError;
+    elements.retryCameraButton.hidden = !state.cameraError;
+    elements.pendingCount.textContent = String(state.pendingCount);
+    elements.uploadingCount.textContent = String(state.uploadingCount);
+    elements.authHint.textContent = state.authHintMessage || getDefaultHint(configured, authenticated);
+  }
 
+  function getDefaultHint(configured, authenticated) {
     if (!configured) {
-      elements.authHint.textContent = "Reemplaza el CLIENT_ID en config.js antes de conectar Google.";
-    } else if (!state.gisReady) {
-      elements.authHint.textContent = "Cargando Google Identity Services...";
-    } else if (authenticated && state.pendingCount > 0) {
-      elements.authHint.textContent = "Los pendientes se subiran automaticamente con conexion.";
-    } else if (authenticated) {
-      elements.authHint.textContent = "Listo para tomar fotos y subirlas a Drive.";
-    } else if (state.pendingCount > 0) {
-      elements.authHint.textContent = "Conecta Google para subir pendientes.";
-    } else {
-      elements.authHint.textContent = "Conecta Google para habilitar la camara.";
+      return "Reemplaza el CLIENT_ID en config.js antes de conectar Google.";
     }
+    if (!state.gisReady) {
+      return "Cargando Google Identity Services...";
+    }
+    if (!state.cameraReady && !state.cameraError) {
+      return "Preparando camara...";
+    }
+    if (authenticated && state.pendingCount > 0) {
+      return "Los pendientes se subiran automaticamente con conexion.";
+    }
+    if (authenticated) {
+      return "Listo para tomar fotos y subirlas a Drive.";
+    }
+    if (state.pendingCount > 0) {
+      return "Conecta Google para subir pendientes.";
+    }
+    return "Puedes tomar fotos ahora; conecta Google para subirlas.";
   }
 
   function updateNetworkStatus() {
@@ -606,3 +1043,4 @@
     });
   }
 })();
+

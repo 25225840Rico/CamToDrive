@@ -32,9 +32,26 @@
           <p class="status-label">Estado</p>
           <p class="status-text" id="statusText">Conectar Google</p>
         </div>
-        <div class="pending-counter" aria-label="Fotos pendientes">
-          <span id="pendingCount">0</span>
-          <small>pendientes</small>
+        <div class="queue-counters" aria-label="Estado de cola">
+          <div class="queue-counter">
+            <span id="pendingCount">0</span>
+            <small>pendientes</small>
+          </div>
+          <div class="queue-counter uploading">
+            <span id="uploadingCount">0</span>
+            <small>subiendo</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="camera-panel" aria-label="Camara continua">
+        <video id="cameraVideo" autoplay muted playsinline></video>
+        <div class="camera-overlay">
+          <p id="cameraMessage">Preparando camara...</p>
+          <div class="camera-fallback-actions">
+            <button class="secondary-button" id="retryCameraButton" type="button" hidden>Reintentar</button>
+            <button class="secondary-button" id="fallbackCaptureButton" type="button" hidden>Usar camara nativa</button>
+          </div>
         </div>
       </section>
 
@@ -45,8 +62,8 @@
         </button>
 
         <button class="primary-button capture-button" id="captureButton" type="button" disabled>
-          <span class="camera-glyph" aria-hidden="true"></span>
-          <span>Tomar foto</span>
+          <span class="shutter-ring" aria-hidden="true"></span>
+          <span>Disparar</span>
         </button>
 
         <input
@@ -55,15 +72,16 @@
           type="file"
           accept="image/*"
           capture="environment"
-          aria-label="Abrir camara trasera"
+          aria-label="Abrir camara trasera nativa"
         >
       </section>
 
-      <section class="last-photo" aria-label="Ultima foto tomada">
+      <section class="last-photo" aria-label="Fotos recientes">
         <div class="thumb-frame" id="thumbFrame">
           <img id="lastThumb" alt="Ultima foto tomada" hidden>
           <span id="emptyThumb">Sin foto reciente</span>
         </div>
+        <ul class="recent-list" id="recentList" aria-label="Estado de disparos recientes"></ul>
       </section>
 
       <footer class="app-footer">
@@ -72,4 +90,3 @@
     </main>
   </body>
 </html>
-

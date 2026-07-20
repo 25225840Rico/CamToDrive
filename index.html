@@ -44,6 +44,25 @@
         </div>
       </section>
 
+      <section
+        class="global-progress"
+        id="globalProgress"
+        role="progressbar"
+        aria-label="Progreso global de subida"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+        hidden
+      >
+        <div class="global-progress-copy">
+          <span>Subiendo lote</span>
+          <strong id="globalProgressText">0%</strong>
+        </div>
+        <div class="global-progress-track" aria-hidden="true">
+          <span id="globalProgressBar"></span>
+        </div>
+      </section>
+
       <section class="native-panel" aria-label="Captura nativa">
         <div class="native-camera-icon" aria-hidden="true"></div>
         <p id="cameraMessage">Toca Disparar para abrir la camara nativa trasera.</p>

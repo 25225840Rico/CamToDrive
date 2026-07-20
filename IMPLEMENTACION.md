@@ -2,7 +2,38 @@
 
 CamToDrive sigue siendo una web app estatica sin backend, frameworks ni build step, lista para publicar en GitHub Pages con rutas relativas.
 
-## Cambios de este encargo
+## Encargo 4 - auditor, debugger, limpiador y progreso
+
+### Fase 1 - Auditor
+
+- Confirmado: la subida multipart usaba `fetch`, por lo que no podia reportar progreso real de subida.
+- Confirmado: la miniatura revocaba el `objectURL` al reemplazar la foto, pero no al salir de la pagina.
+- Confirmado: los pendientes antiguos que arrancaban desde IndexedDB podian subir sin aparecer en "disparos recientes".
+- Confirmado: los estados recientes solo distinguian `Subiendo`, sin porcentaje accesible por foto.
+- Confirmado: el service worker seguia en cache v3 y debia pasar a v4 para refrescar el shell.
+- Sin hallazgos prohibidos: no se encontro captura embebida, recomposicion ni recodificacion en `app.js`.
+
+### Fase 2 - Debugger
+
+- Se revoca la URL temporal de la ultima miniatura en `pagehide` y antes de crear otra.
+- La cola ahora asegura una fila visible para cada foto que empieza a subir, incluso si viene de IndexedDB.
+- El HTTP 401 de la subida XHR limpia la sesion y lanza `AuthExpiredError`, igual que la ruta autorizada existente.
+
+### Fase 3 - Limpiador
+
+- Se unifico la actualizacion de disparos recientes para aceptar parches de estado/progreso.
+- Se centralizo el calculo y saneamiento de porcentajes para evitar valores fuera de rango.
+- Se mantuvieron los textos y flujo de captura nativa sin agregar frameworks ni build.
+
+### Fase 4 - Barra de progreso
+
+- La subida multipart/related a Drive ahora usa `XMLHttpRequest`.
+- `xhr.upload` reporta `progress` por foto y actualiza una barra accesible en la lista de disparos recientes.
+- Se agrego una barra global de lote para las subidas activas.
+- La captura sigue sin bloquearse: la foto original se encola al instante y las subidas continuan en segundo plano con concurrencia 3 y backoff.
+- El service worker usa `camtodrive-shell-v4`.
+
+## Cambios de encargos anteriores
 
 - La captura vuelve a ser 100% nativa con `<input type="file" accept="image/*" capture="environment">` para abrir la camara trasera del sistema.
 - Se elimino por completo la captura en pagina: no hay stream de camara, visor embebido, APIs de captura por frame, redimensionado, recomposicion ni parametros de calidad.

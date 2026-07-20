@@ -1,4 +1,4 @@
-const CACHE_NAME = "camtodrive-shell-v3";
+const CACHE_NAME = "camtodrive-shell-v4";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -59,4 +59,3 @@ async function networkFirst(request) {
     return cached || cache.match("./index.html");
   }
 }
-

@@ -28,6 +28,7 @@
     captureInProgress: false,
     lastThumbUrl: null,
     recentPhotos: [],
+    uploadProgressById: new Map(),
   };
 
   let dbPromise = null;
@@ -90,6 +91,9 @@
     elements.emptyThumb = document.getElementById("emptyThumb");
     elements.authHint = document.getElementById("authHint");
     elements.recentList = document.getElementById("recentList");
+    elements.globalProgress = document.getElementById("globalProgress");
+    elements.globalProgressBar = document.getElementById("globalProgressBar");
+    elements.globalProgressText = document.getElementById("globalProgressText");
   }
 
   function bindEvents() {
@@ -115,6 +119,8 @@
         processPendingQueue();
       }
     });
+
+    window.addEventListener("pagehide", revokeLastThumbnail);
   }
 
   function getAppConfig() {
@@ -297,9 +303,7 @@
   }
 
   function showThumbnail(blob) {
-    if (state.lastThumbUrl) {
-      URL.revokeObjectURL(state.lastThumbUrl);
-    }
+    revokeLastThumbnail();
 
     state.lastThumbUrl = URL.createObjectURL(blob);
     elements.lastThumb.src = state.lastThumbUrl;
@@ -307,18 +311,64 @@
     elements.emptyThumb.hidden = true;
   }
 
+  function revokeLastThumbnail() {
+    if (!state.lastThumbUrl) {
+      return;
+    }
+
+    URL.revokeObjectURL(state.lastThumbUrl);
+    state.lastThumbUrl = null;
+  }
+
   function addRecentPhoto(photo) {
-    state.recentPhotos.unshift(photo);
-    state.recentPhotos = state.recentPhotos.slice(0, 6);
+    state.recentPhotos = state.recentPhotos.filter((item) => item.id !== photo.id);
+    state.recentPhotos.unshift({
+      progress: null,
+      ...photo,
+    });
+    trimRecentPhotos();
     renderRecentPhotos();
   }
 
-  function updateRecentPhoto(id, status) {
+  function ensureRecentPhoto(photo) {
+    const existing = state.recentPhotos.find((item) => item.id === photo.id);
+    if (existing) {
+      return;
+    }
+
+    addRecentPhoto({
+      id: photo.id,
+      fileName: photo.fileName,
+      status: "queued",
+      label: "Pendiente",
+    });
+  }
+
+  function updateRecentPhoto(id, updates) {
     const photo = state.recentPhotos.find((item) => item.id === id);
     if (photo) {
-      photo.status = status;
+      const patch = typeof updates === "string" ? { status: updates } : updates;
+      Object.assign(photo, patch);
+      trimRecentPhotos();
       renderRecentPhotos();
     }
+  }
+
+  function trimRecentPhotos() {
+    const visibleLimit = 6;
+    const hardLimit = 12;
+    const visible = [];
+    const overflow = [];
+
+    state.recentPhotos.forEach((photo) => {
+      if (visible.length < visibleLimit || photo.status === "uploading") {
+        visible.push(photo);
+      } else {
+        overflow.push(photo);
+      }
+    });
+
+    state.recentPhotos = visible.concat(overflow).slice(0, hardLimit);
   }
 
   function renderRecentPhotos() {
@@ -339,22 +389,43 @@
       const item = document.createElement("li");
       item.className = `recent-item ${photo.status}`;
 
+      const info = document.createElement("div");
+      info.className = "recent-info";
+
       const name = document.createElement("span");
       name.className = "recent-name";
       name.textContent = photo.fileName;
+      info.appendChild(name);
+
+      if (photo.status === "uploading") {
+        const progress = normalizeProgress(photo.progress);
+        const progressTrack = document.createElement("div");
+        progressTrack.className = "recent-progress";
+        progressTrack.setAttribute("role", "progressbar");
+        progressTrack.setAttribute("aria-label", `Progreso de subida de ${photo.fileName}`);
+        progressTrack.setAttribute("aria-valuemin", "0");
+        progressTrack.setAttribute("aria-valuemax", "100");
+        progressTrack.setAttribute("aria-valuenow", String(progress));
+
+        const progressBar = document.createElement("span");
+        progressBar.style.width = `${progress}%`;
+        progressTrack.appendChild(progressBar);
+        info.appendChild(progressTrack);
+      }
 
       const badge = document.createElement("span");
       badge.className = "recent-badge";
-      badge.textContent = getRecentStatusText(photo.status);
+      badge.textContent = getRecentStatusText(photo);
 
-      item.append(name, badge);
+      item.append(info, badge);
       elements.recentList.appendChild(item);
     });
   }
 
-  function getRecentStatusText(status) {
+  function getRecentStatusText(photo) {
+    const status = photo.status;
     if (status === "uploading") {
-      return "Subiendo";
+      return `Subiendo ${normalizeProgress(photo.progress)}%`;
     }
     if (status === "done") {
       return "OK";
@@ -365,14 +436,66 @@
     return "En cola";
   }
 
-  async function uploadPhotoToDrive(blob, fileName) {
+  function normalizeProgress(value) {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    return Math.min(100, Math.max(0, Math.round(value)));
+  }
+
+  function setPhotoUploadProgress(id, loaded, total) {
+    const safeLoaded = Math.max(0, Number(loaded) || 0);
+    const safeTotal = Math.max(0, Number(total) || 0);
+    const progress = safeTotal > 0 ? (safeLoaded / safeTotal) * 100 : 0;
+
+    state.uploadProgressById.set(id, {
+      loaded: safeLoaded,
+      total: safeTotal,
+    });
+    updateRecentPhoto(id, {
+      status: "uploading",
+      progress,
+    });
+    updateGlobalUploadProgress();
+  }
+
+  function clearPhotoUploadProgress(id) {
+    state.uploadProgressById.delete(id);
+    updateGlobalUploadProgress();
+  }
+
+  function updateGlobalUploadProgress() {
+    if (!elements.globalProgress) {
+      return;
+    }
+
+    const entries = Array.from(state.uploadProgressById.values());
+    if (entries.length === 0) {
+      elements.globalProgress.hidden = true;
+      elements.globalProgressBar.style.width = "0%";
+      elements.globalProgressText.textContent = "0%";
+      elements.globalProgress.setAttribute("aria-valuenow", "0");
+      return;
+    }
+
+    const loaded = entries.reduce((sum, item) => sum + item.loaded, 0);
+    const total = entries.reduce((sum, item) => sum + item.total, 0);
+    const progress = normalizeProgress(total > 0 ? (loaded / total) * 100 : 0);
+
+    elements.globalProgress.hidden = false;
+    elements.globalProgressBar.style.width = `${progress}%`;
+    elements.globalProgressText.textContent = `${progress}%`;
+    elements.globalProgress.setAttribute("aria-valuenow", String(progress));
+  }
+
+  async function uploadPhotoToDrive(blob, fileName, onProgress) {
     let folderId = await getOrCreateFolderId();
-    let response = await sendMultipartUpload(folderId, blob, fileName);
+    let response = await sendMultipartUpload(folderId, blob, fileName, onProgress);
 
     if (response.status === 404) {
       localStorage.removeItem(getFolderStorageKey());
       folderId = await getOrCreateFolderId();
-      response = await sendMultipartUpload(folderId, blob, fileName);
+      response = await sendMultipartUpload(folderId, blob, fileName, onProgress);
     }
 
     if (!response.ok) {
@@ -382,7 +505,7 @@
     return response.json();
   }
 
-  async function sendMultipartUpload(folderId, blob, fileName) {
+  async function sendMultipartUpload(folderId, blob, fileName, onProgress) {
     const mimeType = blob.type || "application/octet-stream";
     const metadata = {
       name: fileName,
@@ -405,13 +528,70 @@
       { type: `multipart/related; boundary=${boundary}` }
     );
 
-    return authorizedFetch(DRIVE_UPLOAD_URL, {
+    return authorizedUploadWithProgress(DRIVE_UPLOAD_URL, {
       method: "POST",
       headers: {
         "Content-Type": `multipart/related; boundary=${boundary}`,
       },
       body,
+    }, onProgress);
+  }
+
+  function authorizedUploadWithProgress(url, options, onProgress) {
+    if (!isAuthenticated()) {
+      throw new AuthExpiredError();
+    }
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const method = options.method || "GET";
+      const headers = new Headers(options.headers || {});
+
+      xhr.open(method, url, true);
+      xhr.setRequestHeader("Authorization", `Bearer ${state.accessToken}`);
+      headers.forEach((value, key) => {
+        xhr.setRequestHeader(key, value);
+      });
+
+      xhr.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable && typeof onProgress === "function") {
+          onProgress(event.loaded, event.total);
+        }
+      });
+
+      xhr.addEventListener("load", () => {
+        const response = makeXhrResponse(xhr.status, xhr.statusText, xhr.responseText || "");
+
+        if (xhr.status === 401) {
+          clearAuth(false);
+          reject(new AuthExpiredError("Google solicita reconectar la cuenta."));
+          return;
+        }
+
+        resolve(response);
+      });
+
+      xhr.addEventListener("error", () => {
+        reject(new Error("No se pudo conectar con Google Drive."));
+      });
+
+      xhr.addEventListener("abort", () => {
+        reject(new Error("La subida fue cancelada."));
+      });
+
+      xhr.send(options.body || null);
     });
+  }
+
+  function makeXhrResponse(status, statusText, bodyText) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      statusText,
+      text: () => Promise.resolve(bodyText),
+      json: () => Promise.resolve(bodyText ? JSON.parse(bodyText) : null),
+      clone: () => makeXhrResponse(status, statusText, bodyText),
+    };
   }
 
   async function getOrCreateFolderId() {
@@ -558,7 +738,8 @@
       const workers = Array.from({ length: workerCount }, async () => {
         while (queue.length > 0 && !authFailed && navigator.onLine) {
           const photo = queue.shift();
-          updateRecentPhoto(photo.id, "uploading");
+          ensureRecentPhoto(photo);
+          setPhotoUploadProgress(photo.id, 0, 0);
           state.uploadingCount += 1;
           updateControls();
 
@@ -566,18 +747,29 @@
             await uploadWithRetries(photo);
             await deletePendingPhoto(photo.id);
             uploadedCount += 1;
-            updateRecentPhoto(photo.id, "done");
+            updateRecentPhoto(photo.id, {
+              status: "done",
+              progress: 100,
+            });
             await refreshPendingCount();
           } catch (error) {
             console.error(error);
             if (error instanceof AuthExpiredError) {
               authFailed = true;
               clearAuth(false);
+              updateRecentPhoto(photo.id, {
+                status: "error",
+                progress: null,
+              });
             } else {
               failedCount += 1;
-              updateRecentPhoto(photo.id, "error");
+              updateRecentPhoto(photo.id, {
+                status: "error",
+                progress: null,
+              });
             }
           } finally {
+            clearPhotoUploadProgress(photo.id);
             state.uploadingCount = Math.max(0, state.uploadingCount - 1);
             updateControls();
           }
@@ -615,7 +807,9 @@
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_UPLOAD_ATTEMPTS; attempt += 1) {
       try {
-        await uploadPhotoToDrive(photo.blob, photo.fileName);
+        await uploadPhotoToDrive(photo.blob, photo.fileName, (loaded, total) => {
+          setPhotoUploadProgress(photo.id, loaded, total);
+        });
         return;
       } catch (error) {
         if (error instanceof AuthExpiredError) {

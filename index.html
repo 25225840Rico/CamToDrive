@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#f7f4ed" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#121418" media="(prefers-color-scheme: dark)">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="CamToDrive">
+    <title>CamToDrive</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="config.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell" aria-labelledby="app-title">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">PWA local</p>
+          <h1 id="app-title">CamToDrive</h1>
+        </div>
+        <span class="network-pill" id="networkStatus">Sin conexion</span>
+      </header>
+
+      <section class="status-panel" aria-live="polite">
+        <div class="status-copy">
+          <p class="status-label">Estado</p>
+          <p class="status-text" id="statusText">Conectar Google</p>
+        </div>
+        <div class="pending-counter" aria-label="Fotos pendientes">
+          <span id="pendingCount">0</span>
+          <small>pendientes</small>
+        </div>
+      </section>
+
+      <section class="actions" aria-label="Acciones principales">
+        <button class="primary-button connect-button" id="connectButton" type="button">
+          <span class="button-icon" aria-hidden="true">G</span>
+          <span>Conectar Google</span>
+        </button>
+
+        <button class="primary-button capture-button" id="captureButton" type="button" disabled>
+          <span class="camera-glyph" aria-hidden="true"></span>
+          <span>Tomar foto</span>
+        </button>
+
+        <input
+          id="cameraInput"
+          class="visually-hidden"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          aria-label="Abrir camara trasera"
+        >
+      </section>
+
+      <section class="last-photo" aria-label="Ultima foto tomada">
+        <div class="thumb-frame" id="thumbFrame">
+          <img id="lastThumb" alt="Ultima foto tomada" hidden>
+          <span id="emptyThumb">Sin foto reciente</span>
+        </div>
+      </section>
+
+      <footer class="app-footer">
+        <span id="authHint">Configura el Client ID para empezar.</span>
+      </footer>
+    </main>
+  </body>
+</html>
+

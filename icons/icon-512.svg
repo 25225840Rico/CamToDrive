@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="CamToDrive">
+  <rect width="512" height="512" rx="96" fill="#1f7a5a"/>
+  <path fill="#f7f4ed" d="M140 175h47l22-31h94l22 31h47c25 0 45 20 45 45v120c0 25-20 45-45 45H140c-25 0-45-20-45-45V220c0-25 20-45 45-45z"/>
+  <circle cx="256" cy="280" r="70" fill="#1f7a5a"/>
+  <circle cx="256" cy="280" r="42" fill="#f7f4ed"/>
+  <path fill="#2d6cdf" d="M327 134l76 132h-70l-41-71 35-61z"/>
+  <path fill="#f0b429" d="M185 134h142l-35 61H220l-35-61z"/>
+  <path fill="#38a169" d="M109 266l76-132 35 61-41 71h-70z"/>
+</svg>

@@ -2,7 +2,38 @@
 
 CamToDrive sigue siendo una web app estatica sin backend, frameworks ni build step, lista para publicar en GitHub Pages con rutas relativas.
 
-## Encargo 6 - interfaz Windows 98 (solo movil)
+## Encargo 7 - interfaz Liquid Glass (solo movil)
+
+Reemplaza la piel Windows 98. El aspecto no es decorativo: cada capa del material traduce una ley optica, y `styles.css` lleva la deduccion escrita en comentarios.
+
+### Convencion de luz
+
+Fuente virtual arriba-izquierda, 45 grados, ~5500 K (blanco calido). Toda luz alta va arriba-izquierda y toda sombra abajo-derecha. La coherencia direccional es lo que hace que el ojo lea "vidrio" y no "capa blanca translucida".
+
+### Fisica aplicada
+
+| Ley | Formula | Traduccion a CSS |
+| --- | --- | --- |
+| Fresnel (Schlick) | `R = R0 + (1-R0)(1-cos0)^5`, `R0 = ((n-1)/(n+1))^2` | Con n=1.5 el vidrio refleja 4% de frente y casi 100% a angulo rasante. El exponente 5 hace el salto brusco: el canto es una linea de 1 px muy brillante (`border` con `background-clip: border-box`), nunca un degradado ancho. Va en todo el perimetro, porque cualquier borde se ve en angulo rasante. |
+| Reflexion especular (Blinn-Phong) | `I = ks (N.H)^a` | Vidrio pulido: exponente ~200, lobulo estrecho. El `radial-gradient` del reflejo es pequeno y esta arriba-izquierda, no lavado sobre toda la pieza. |
+| Absorcion (Beer-Lambert) | `T = e^(-a d)` | El tinte depende del camino optico: los cantos se ven mas densos que el centro. El Fe(II) del vidrio flotado absorbe el rojo, de ahi el matiz verde-cian de los bordes (`--glass-tint`). |
+| Dispersion (Cauchy) | `n = A + B/lambda^2` | El azul se desvia mas que el rojo: franja cian en un canto y ambar en el opuesto, al 3-4% de opacidad. Mas que eso deja de ser fisica y pasa a ser efecto. |
+| Caustica | - | El vidrio curvo concentra la luz que lo atraviesa hacia el lado contrario a la fuente: resplandor teñido abajo-derecha en vez de una sombra gris. |
+| Refraccion (Snell) | `n1 sen01 = n2 sen02` | Aproximada con `blur` + `saturate`: el desenfoque hace la refraccion difusa y el exceso de croma imita la ganancia de un medio denso. |
+
+**Limite tecnico decisivo:** Safari/iOS **no** soporta `backdrop-filter: url(#filtro-svg)`, asi que el `feTurbulence` + `feDisplacementMap` que usa el Liquid Glass "real" para desviar el fondo solo funciona en Chromium. En el iPhone no se veria nada. Toda la optica se construye con `-webkit-backdrop-filter: blur() saturate() brightness()`, gradientes y sombras interiores, que Safari si acelera por GPU.
+
+### Decisiones de interfaz
+
+- El pulsado de un boton no cambia de color: **comprime el material**. Menos espesor implica menos camino optico, asi que baja el `blur`, baja el tinte y el reflejo se desplaza porque gira la normal de la superficie.
+- Fondo con malla de gradientes: sin algo vivo detras, el vidrio no tiene que refractar y se ve como plastico gris. Los focos ademas le dan al material de donde sacar su color.
+- Visor con relacion 3:4 y cantos de 30 px; el reflejo y la franja cromatica se pintan **sobre** el video (`z-index: 3`), porque ahi el vidrio esta delante de la imagen.
+- Jerarquia sin cambios respecto del encargo anterior: **Disparar** es el boton dominante (76 px), **Conectar Google** encima y desaparece al autenticarse.
+- Rendimiento: `contain: paint` en el visor y `backdrop-filter` limitado a pocas piezas, que en iPhone cada capa cuesta GPU.
+- Reserva: `@supports not (backdrop-filter)` cambia el vidrio por un solido oscuro con el mismo canto Fresnel, que sigue siendo legible.
+- Cache del shell subida a `camtodrive-shell-v7`; `theme_color` y `background_color` del manifest a `#070b18`.
+
+## Encargo 6 - interfaz Windows 98 (superado por el encargo 7)
 
 - Toda la app vive dentro de una unica "ventana" Win98: barra de titulo azul, cuerpo gris y barra de estado abajo. Fondo teal clasico.
 - Jerarquia mas simple: visor grande arriba, **Disparar** como boton dominante (68 px de alto), **Conectar Google** encima y desaparece al autenticarse.

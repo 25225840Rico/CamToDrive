@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#008080">
+    <meta name="theme-color" content="#070b18">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="CamToDrive">
     <title>CamToDrive</title>
     <link rel="manifest" href="manifest.webmanifest">
@@ -17,92 +17,92 @@
     <script src="app.js" defer></script>
   </head>
   <body>
-    <main class="window" aria-labelledby="app-title">
-      <div class="title-bar">
-        <span class="title-bar-icon" aria-hidden="true"></span>
-        <h1 class="title-bar-text" id="app-title">CamToDrive</h1>
-        <span class="title-bar-buttons" aria-hidden="true">
-          <span class="title-bar-button">_</span>
-          <span class="title-bar-button">&#9633;</span>
-          <span class="title-bar-button">&#10005;</span>
-        </span>
-      </div>
+    <div class="ambient" aria-hidden="true"></div>
 
-      <div class="window-body">
-        <section class="viewer-panel" aria-label="Visor de camara">
-          <div class="viewer-frame" id="viewerFrame">
-            <video id="viewer" playsinline autoplay muted disablepictureinpicture hidden></video>
+    <main class="app">
+      <header class="app-header">
+        <h1>CamToDrive</h1>
+        <span class="net-chip glass" id="networkStatus">Sin conexion</span>
+      </header>
 
-            <div class="camera-fallback" id="cameraFallback" hidden>
-              <div class="native-camera-icon" aria-hidden="true"></div>
-              <p id="cameraMessage">Abriendo la camara...</p>
-              <div class="fallback-actions">
-                <button class="win-button" id="retryCameraButton" type="button">Reintentar camara</button>
-                <button class="win-button" id="nativeCameraButton" type="button">Camara nativa</button>
-              </div>
+      <section class="viewer-panel" aria-label="Visor de camara">
+        <div class="viewer-frame glass" id="viewerFrame">
+          <video id="viewer" playsinline autoplay muted disablepictureinpicture hidden></video>
+
+          <div class="camera-fallback" id="cameraFallback" hidden>
+            <div class="native-camera-icon" aria-hidden="true"></div>
+            <p id="cameraMessage">Abriendo la camara...</p>
+            <div class="fallback-actions">
+              <button class="glass-button" id="retryCameraButton" type="button">Reintentar camara</button>
+              <button class="glass-button" id="nativeCameraButton" type="button">Camara nativa</button>
             </div>
           </div>
-          <p class="capture-quality" id="captureQuality" hidden></p>
-        </section>
+        </div>
+        <p class="capture-quality" id="captureQuality" hidden></p>
+      </section>
 
-        <section
-          class="global-progress"
-          id="globalProgress"
-          role="progressbar"
-          aria-label="Progreso global de subida"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow="0"
-          hidden
-        >
-          <div class="global-progress-copy">
-            <span>Subiendo a Drive</span>
-            <strong id="globalProgressText">0%</strong>
-          </div>
-          <div class="progress-track" aria-hidden="true">
-            <span id="globalProgressBar"></span>
-          </div>
-        </section>
+      <section
+        class="global-progress glass"
+        id="globalProgress"
+        role="progressbar"
+        aria-label="Progreso global de subida"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+        hidden
+      >
+        <div class="global-progress-copy">
+          <span>Subiendo a Drive</span>
+          <strong id="globalProgressText">0%</strong>
+        </div>
+        <div class="progress-track" aria-hidden="true">
+          <span id="globalProgressBar"></span>
+        </div>
+      </section>
 
-        <section class="actions" aria-label="Acciones principales">
-          <button class="win-button connect-button" id="connectButton" type="button">
-            <span class="button-icon" aria-hidden="true">G</span>
-            <span>Conectar Google</span>
-          </button>
+      <section class="actions" aria-label="Acciones principales">
+        <button class="glass-button connect-button" id="connectButton" type="button">
+          <span class="button-icon" aria-hidden="true">G</span>
+          <span>Conectar Google</span>
+        </button>
 
-          <button class="win-button capture-button" id="captureButton" type="button">
-            <span class="shutter-ring" aria-hidden="true"></span>
-            <span>Disparar</span>
-          </button>
-        </section>
+        <button class="glass-button capture-button" id="captureButton" type="button">
+          <span class="shutter-ring" aria-hidden="true"></span>
+          <span>Disparar</span>
+        </button>
+      </section>
 
-        <input
-          id="cameraInput"
-          class="visually-hidden"
-          type="file"
-          accept="image/*"
-          capture="environment"
-          aria-label="Abrir camara trasera nativa"
-        >
+      <input
+        id="cameraInput"
+        class="visually-hidden"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        aria-label="Abrir camara trasera nativa"
+      >
 
-        <fieldset class="group-box last-photo">
-          <legend>Ultimas fotos</legend>
+      <section class="recent glass" aria-label="Ultimas fotos">
+        <div class="recent-head">
+          <h2>Ultimas fotos</h2>
+          <p class="counters">
+            <span id="pendingCount">0</span> en cola
+            <span class="dot" aria-hidden="true">&middot;</span>
+            <span id="uploadingCount">0</span> subiendo
+          </p>
+        </div>
+        <div class="recent-body">
           <div class="thumb-frame">
             <img id="lastThumb" alt="Ultima foto tomada" hidden>
             <span id="emptyThumb">Sin foto</span>
           </div>
           <ul class="recent-list" id="recentList" aria-label="Estado de disparos recientes"></ul>
-        </fieldset>
+        </div>
+      </section>
 
+      <footer class="app-footer" aria-live="polite">
+        <p class="status-line" id="statusText">Conectar Google</p>
         <p class="hint" id="authHint">Configura el Client ID para empezar.</p>
-      </div>
-
-      <div class="status-bar" aria-live="polite">
-        <span class="status-cell status-cell-wide" id="statusText">Conectar Google</span>
-        <span class="status-cell"><span id="pendingCount">0</span> en cola</span>
-        <span class="status-cell"><span id="uploadingCount">0</span> subiendo</span>
-        <span class="status-cell" id="networkStatus">Sin conexion</span>
-      </div>
+      </footer>
     </main>
   </body>
 </html>

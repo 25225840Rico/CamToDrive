@@ -1,39 +1,79 @@
-/* CamToDrive — estetica Windows 98, pensada para usarse solo desde el telefono. */
+/* =============================================================================
+   CamToDrive — Liquid Glass
+   -----------------------------------------------------------------------------
+   El aspecto no es decorativo: cada capa traduce una ley optica.
+
+   Fuente de luz virtual: arriba-izquierda, 45 grados, ~5500 K (blanco calido).
+   Toda luz alta va arriba-izquierda y toda sombra abajo-derecha, sin excepcion:
+   la coherencia direccional es lo que hace que el ojo lea "vidrio" y no "capa
+   blanca translucida".
+
+   1. FRESNEL (Schlick)  R = R0 + (1-R0)(1-cos0)^5,  R0 = ((n-1)/(n+1))^2
+      Con n(vidrio) = 1.5 -> R0 = 0.04. De frente el vidrio refleja solo el 4%
+      (centro casi transparente); a angulo rasante tiende a 1 (borde espejo).
+      El exponente 5 hace que el salto sea brusco -> el brillo del canto es una
+      linea fina de 1 px muy opaca, nunca un degradado ancho. Va en TODO el
+      perimetro, no solo arriba: cualquier borde se ve en angulo rasante.
+
+   2. REFLEXION ESPECULAR (Blinn-Phong)  I = ks (N.H)^a
+      Vidrio pulido: a ~ 200 -> lobulo estrecho. El reflejo de la fuente es un
+      punto pequeno y nitido arriba-izquierda, no un lavado sobre toda la pieza.
+
+   3. ABSORCION (Beer-Lambert)  T = e^(-a d)
+      El tinte depende del camino optico. Los cantos (d grande) se ven mas
+      densos que el centro. En vidrio flotado el Fe(II) absorbe el rojo, por eso
+      los cantos tiran a verde-cian: ese es el matiz de los bordes aqui.
+
+   4. DISPERSION (Cauchy)  n = A + B/lambda^2
+      El azul se desvia mas que el rojo. Donde la desviacion es maxima (los
+      cantos) aparece franja cian de un lado y ambar del opuesto. Al 3-4% de
+      opacidad: mas que eso deja de ser fisica y pasa a ser efecto.
+
+   5. CAUSTICA
+      El vidrio curvo concentra la luz que lo atraviesa y la proyecta al lado
+      contrario a la fuente -> resplandor teñido abajo-derecha, no una sombra
+      gris.
+
+   6. REFRACCION (Snell)  n1 sen01 = n2 sen02
+      Safari/iOS no admite backdrop-filter: url(#filtro-svg), asi que no hay
+      feDisplacementMap para desviar el fondo de verdad. Se aproxima con
+      blur + saturate: el desenfoque es lo que hace la refraccion difusa, y el
+      exceso de saturacion imita la ganancia de croma de un medio denso.
+   ============================================================================= */
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 
-  --face: #c0c0c0;
-  --face-light: #dfdfdf;
-  --light: #ffffff;
-  --shadow: #808080;
-  --dark: #0a0a0a;
-  --desktop: #008080;
-  --title-a: #000080;
-  --title-b: #1084d0;
-  --title-text: #ffffff;
-  --field: #ffffff;
-  --text: #000000;
-  --text-disabled: #808080;
-  --ok: #007000;
-  --warning: #7a4b00;
-  --error: #a80000;
+  /* Luz */
+  --key-light: 255 246 235;      /* fuente calida 5500 K */
+  --sky-light: 186 220 255;      /* rebote frio de ambiente */
 
-  /* Relieve clasico de 2px: saliente y hundido. */
-  --raised: inset -1px -1px var(--dark), inset 1px 1px var(--light),
-    inset -2px -2px var(--shadow), inset 2px 2px var(--face-light);
-  --sunken: inset -1px -1px var(--light), inset 1px 1px var(--dark),
-    inset -2px -2px var(--face-light), inset 2px 2px var(--shadow);
-  --sunken-thin: inset -1px -1px var(--light), inset 1px 1px var(--shadow);
+  /* Vidrio: tinte cian-verdoso de canto (absorcion de Fe II) */
+  --glass-tint: 190 226 232;
+  --glass-body: 255 255 255;
 
-  --font: "MS Sans Serif", Tahoma, Verdana, Geneva, sans-serif;
+  /* Fondo */
+  --void: #070b18;
+  --ink: #f2f6ff;
+  --ink-soft: rgba(242, 246, 255, 0.66);
+  --ink-faint: rgba(242, 246, 255, 0.42);
+
+  --ok: #5ce0a8;
+  --warning: #ffca6b;
+  --error: #ff7b8a;
+
+  --radius-lg: 30px;
+  --radius-md: 22px;
+  --radius-sm: 16px;
+
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    system-ui, sans-serif;
 }
 
 * {
   box-sizing: border-box;
 }
 
-/* Las reglas de abajo fijan display, asi que [hidden] necesita ganar siempre. */
 [hidden] {
   display: none !important;
 }
@@ -47,115 +87,178 @@ body {
 body {
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--desktop);
-  color: var(--text);
+  background: var(--void);
+  color: var(--ink);
   font-family: var(--font);
-  font-size: 15px;
-  line-height: 1.35;
+  font-size: 16px;
+  line-height: 1.4;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 
-/* --------------------------------------------------------------------------
-   Ventana
+/* -----------------------------------------------------------------------------
+   Fondo: malla de gradientes.
+   Sin algo vivo detras, el vidrio no tiene nada que refractar y se ve como
+   plastico gris. Los focos ademas dan al material de donde sacar su color.
    -------------------------------------------------------------------------- */
 
-.window {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-  min-height: 100dvh;
-  background: var(--face);
-  box-shadow: var(--raised);
-  padding: 3px;
-  padding-top: calc(3px + env(safe-area-inset-top));
-  padding-bottom: calc(3px + env(safe-area-inset-bottom));
-  padding-left: calc(3px + env(safe-area-inset-left));
-  padding-right: calc(3px + env(safe-area-inset-right));
+.ambient {
+  position: fixed;
+  inset: -20%;
+  z-index: -1;
+  background:
+    radial-gradient(38% 30% at 18% 12%, rgba(99, 102, 241, 0.55), transparent 70%),
+    radial-gradient(34% 28% at 84% 8%, rgba(14, 165, 233, 0.5), transparent 72%),
+    radial-gradient(46% 38% at 76% 82%, rgba(217, 70, 239, 0.42), transparent 70%),
+    radial-gradient(40% 34% at 12% 78%, rgba(45, 212, 191, 0.38), transparent 72%),
+    var(--void);
+  filter: blur(30px) saturate(125%);
 }
 
-.title-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 3px 3px 4px;
-  background: linear-gradient(90deg, var(--title-a), var(--title-b));
-  user-select: none;
-}
+/* -----------------------------------------------------------------------------
+   Material base
+   -------------------------------------------------------------------------- */
 
-.title-bar-icon {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  background: var(--face);
-  box-shadow: var(--raised);
+.glass {
   position: relative;
+  isolation: isolate;
+
+  /* (3) Beer-Lambert: cuerpo casi limpio, cantos con mas tinte acumulado. */
+  background:
+    linear-gradient(
+        158deg,
+        rgba(var(--glass-body) / 0.14),
+        rgba(var(--glass-body) / 0.05) 42%,
+        rgba(var(--glass-tint) / 0.09)
+      )
+      padding-box,
+    /* (1) Fresnel: el canto refleja casi todo. Alto arriba (luz directa) y
+       tambien abajo (incidencia rasante); apagado en los flancos medios. */
+      linear-gradient(
+        158deg,
+        rgba(var(--key-light) / 0.72),
+        rgba(var(--glass-body) / 0.1) 26%,
+        rgba(var(--glass-body) / 0.06) 62%,
+        rgba(var(--sky-light) / 0.5)
+      )
+      border-box;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+
+  /* (6) Refraccion difusa + ganancia de croma del medio denso. */
+  -webkit-backdrop-filter: blur(22px) saturate(180%) brightness(1.06);
+  backdrop-filter: blur(22px) saturate(180%) brightness(1.06);
+
+  box-shadow:
+    /* (5) Caustica: luz concentrada que sale por el lado opuesto a la fuente. */
+    0 18px 40px -18px rgba(8, 12, 28, 0.9),
+    0 2px 18px -6px rgba(120, 190, 255, 0.28),
+    /* Grosor interno del canto: la pared de vidrio vista desde dentro. */
+    inset 0 1px 1px rgba(var(--key-light) / 0.34),
+    inset 0 -1px 1px rgba(var(--sky-light) / 0.16);
 }
 
-.title-bar-icon::after {
+/* (2) Blinn-Phong con exponente alto: reflejo compacto de la fuente.
+   z-index -1 con isolation: se pinta sobre el fondo del propio vidrio pero
+   debajo del texto, que debe leerse limpio. */
+.glass::before {
   content: "";
   position: absolute;
-  inset: 5px 4px;
-  background: var(--title-a);
-  border-radius: 50%;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  background: radial-gradient(
+    58% 42% at 16% 6%,
+    rgba(var(--key-light) / 0.34),
+    rgba(var(--key-light) / 0.07) 42%,
+    transparent 68%
+  );
 }
 
-.title-bar-text {
-  flex: 1;
-  margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--title-text);
-  letter-spacing: 0.2px;
+/* (4) Dispersion: el azul se desvia mas que el rojo en el canto. */
+.glass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  box-shadow:
+    inset 1px 1px 0 -0.5px rgba(120, 245, 255, 0.34),
+    inset -1px -1px 0 -0.5px rgba(255, 190, 120, 0.26);
 }
 
-.title-bar-buttons {
-  display: flex;
-  gap: 2px;
-}
+/* -----------------------------------------------------------------------------
+   Estructura
+   -------------------------------------------------------------------------- */
 
-.title-bar-button {
-  width: 20px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--face);
-  box-shadow: var(--raised);
-  font-size: 11px;
-  line-height: 1;
-  color: var(--text);
-}
-
-.window-body {
-  flex: 1;
+.app {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: calc(14px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+    calc(18px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 6px;
-  overflow-y: auto;
+  gap: 14px;
 }
 
-/* --------------------------------------------------------------------------
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.net-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--error);
+  white-space: nowrap;
+}
+
+.net-chip.online {
+  color: var(--ok);
+}
+
+/* -----------------------------------------------------------------------------
    Visor
    -------------------------------------------------------------------------- */
 
 .viewer-panel {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
 .viewer-frame {
   position: relative;
   width: 100%;
   aspect-ratio: 3 / 4;
-  max-height: 46vh;
-  margin: 0 auto;
-  background: #000000;
-  box-shadow: var(--sunken);
-  padding: 2px;
+  max-height: 52vh;
+  padding: 5px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
+  contain: paint;
+}
+
+/* Aqui el vidrio esta DELANTE de la imagen: el reflejo y la franja cromatica
+   deben caer sobre el video, no detras. */
+.viewer-frame::before,
+.viewer-frame::after {
+  z-index: 3;
 }
 
 .viewer-frame video {
@@ -163,169 +266,290 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
-  background: #000000;
+  border-radius: calc(var(--radius-lg) - 6px);
+  background: #05070f;
 }
 
 .camera-fallback {
   position: absolute;
-  inset: 2px;
+  inset: 5px;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 12px;
+  gap: 14px;
+  padding: 20px;
   text-align: center;
-  background: var(--face);
-  color: var(--text);
+  border-radius: calc(var(--radius-lg) - 6px);
+  background: rgba(8, 12, 26, 0.42);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
 
 .camera-fallback p {
   margin: 0;
   font-size: 14px;
+  color: var(--ink-soft);
+  max-width: 26ch;
 }
 
 .native-camera-icon {
-  width: 44px;
-  height: 34px;
-  background: var(--face);
-  box-shadow: var(--raised);
+  width: 46px;
+  height: 36px;
+  border-radius: 12px;
+  background: linear-gradient(
+    158deg,
+    rgba(var(--glass-body) / 0.22),
+    rgba(var(--glass-body) / 0.06)
+  );
+  box-shadow:
+    inset 0 1px 1px rgba(var(--key-light) / 0.4),
+    0 6px 14px -8px rgba(0, 0, 0, 0.8);
   position: relative;
 }
 
 .native-camera-icon::after {
   content: "";
   position: absolute;
-  inset: 8px 13px;
-  background: var(--shadow);
-  box-shadow: var(--sunken-thin);
+  inset: 9px 14px;
   border-radius: 50%;
+  background: radial-gradient(
+    circle at 34% 28%,
+    rgba(var(--key-light) / 0.5),
+    rgba(10, 16, 32, 0.85) 62%
+  );
 }
 
 .fallback-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.fallback-actions .glass-button {
+  min-height: 44px;
+  padding: 10px 16px;
+  font-size: 14px;
 }
 
 .capture-quality {
   margin: 0;
-  padding: 2px 4px;
-  font-size: 12px;
-  color: #303030;
   text-align: center;
+  font-size: 12px;
+  color: var(--ink-faint);
+  letter-spacing: 0.01em;
 }
 
-/* --------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
    Botones
+   El pulsado no cambia de color: comprime el material. Menos espesor implica
+   menos camino optico -> menos refraccion (blur), menos absorcion (tinte) y el
+   reflejo especular se desplaza porque la normal de la superficie gira.
    -------------------------------------------------------------------------- */
-
-.win-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 8px 14px;
-  border: none;
-  border-radius: 0;
-  background: var(--face);
-  box-shadow: var(--raised);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 15px;
-  cursor: pointer;
-  user-select: none;
-  touch-action: manipulation;
-}
-
-.win-button:active:not(:disabled) {
-  box-shadow: var(--sunken);
-  padding: 9px 13px 7px 15px;
-}
-
-.win-button:focus-visible {
-  outline: 1px dotted var(--text);
-  outline-offset: -5px;
-}
-
-.win-button:disabled {
-  color: var(--text-disabled);
-  text-shadow: 1px 1px 0 var(--light);
-  cursor: not-allowed;
-}
 
 .actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+
+.glass-button {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 14px 20px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+        158deg,
+        rgba(var(--glass-body) / 0.18),
+        rgba(var(--glass-body) / 0.07) 46%,
+        rgba(var(--glass-tint) / 0.12)
+      )
+      padding-box,
+    linear-gradient(
+        158deg,
+        rgba(var(--key-light) / 0.8),
+        rgba(var(--glass-body) / 0.12) 28%,
+        rgba(var(--glass-body) / 0.08) 60%,
+        rgba(var(--sky-light) / 0.55)
+      )
+      border-box;
+  -webkit-backdrop-filter: blur(18px) saturate(175%);
+  backdrop-filter: blur(18px) saturate(175%);
+  box-shadow:
+    0 14px 30px -16px rgba(6, 10, 24, 0.95),
+    0 2px 14px -6px rgba(130, 195, 255, 0.3),
+    inset 0 1px 1px rgba(var(--key-light) / 0.4),
+    inset 0 -1px 1px rgba(var(--sky-light) / 0.18);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 140ms ease, -webkit-backdrop-filter 140ms ease;
+}
+
+.glass-button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  background: radial-gradient(
+    52% 60% at 18% 4%,
+    rgba(var(--key-light) / 0.42),
+    rgba(var(--key-light) / 0.08) 46%,
+    transparent 70%
+  );
+  transition: background 140ms ease;
+}
+
+.glass-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  box-shadow:
+    inset 1px 1px 0 -0.5px rgba(120, 245, 255, 0.3),
+    inset -1px -1px 0 -0.5px rgba(255, 190, 120, 0.24);
+}
+
+.glass-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+  -webkit-backdrop-filter: blur(11px) saturate(150%);
+  backdrop-filter: blur(11px) saturate(150%);
+  box-shadow:
+    0 6px 16px -12px rgba(6, 10, 24, 0.9),
+    inset 0 1px 1px rgba(var(--key-light) / 0.3),
+    inset 0 -1px 1px rgba(var(--sky-light) / 0.12);
+}
+
+/* La normal gira al hundirse: el reflejo baja y se estira. */
+.glass-button:active:not(:disabled)::before {
+  background: radial-gradient(
+    64% 72% at 24% 16%,
+    rgba(var(--key-light) / 0.28),
+    transparent 66%
+  );
+}
+
+.glass-button:focus-visible {
+  outline: 2px solid rgba(var(--sky-light) / 0.75);
+  outline-offset: 3px;
+}
+
+.glass-button:disabled {
+  color: var(--ink-faint);
+  cursor: not-allowed;
+  -webkit-backdrop-filter: blur(12px) saturate(110%);
+  backdrop-filter: blur(12px) saturate(110%);
+  box-shadow:
+    0 8px 20px -18px rgba(6, 10, 24, 0.8),
+    inset 0 1px 1px rgba(var(--key-light) / 0.16);
+}
+
+.glass-button:disabled::before {
+  background: none;
 }
 
 .connect-button .button-icon {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  background: var(--light);
-  box-shadow: var(--sunken-thin);
-  color: var(--title-a);
-  font-weight: 700;
+  border-radius: 50%;
+  background: linear-gradient(
+    158deg,
+    rgba(var(--key-light) / 0.34),
+    rgba(var(--glass-body) / 0.1)
+  );
+  box-shadow: inset 0 1px 1px rgba(var(--key-light) / 0.5);
   font-size: 13px;
+  font-weight: 700;
 }
 
 .capture-button {
-  min-height: 68px;
-  font-size: 21px;
-  font-weight: 700;
-  gap: 12px;
+  min-height: 76px;
+  font-size: 20px;
+  font-weight: 600;
+  gap: 14px;
 }
 
+/* Esfera roja: sombreado difuso mas reflejo especular estrecho, misma luz. */
 .shutter-ring {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   flex: none;
   border-radius: 50%;
-  background: #d40000;
-  box-shadow: inset -1px -1px #600000, inset 1px 1px #ff8080;
+  background:
+    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.85), transparent 34%),
+    radial-gradient(circle at 62% 74%, #8f1020, #e0233c 62%, #ff5f6d);
+  box-shadow:
+    0 0 16px rgba(255, 60, 90, 0.45),
+    inset 0 -2px 4px rgba(90, 0, 16, 0.6);
 }
 
 .capture-button:disabled .shutter-ring {
-  background: var(--shadow);
-  box-shadow: inset -1px -1px #505050, inset 1px 1px var(--face-light);
+  background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.4), transparent 40%),
+    radial-gradient(circle at 62% 74%, #2b3346, #4a5468);
+  box-shadow: none;
 }
 
-/* --------------------------------------------------------------------------
-   Progreso
+/* -----------------------------------------------------------------------------
+   Progreso: el relleno es liquido dentro del canal, con su propio menisco.
    -------------------------------------------------------------------------- */
 
 .global-progress {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px;
-  background: var(--face);
-  box-shadow: var(--raised);
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
 }
 
 .global-progress-copy {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 13px;
+  font-size: 14px;
+  color: var(--ink-soft);
+  position: relative;
+  z-index: 2;
 }
 
 .global-progress-copy strong {
-  font-size: 14px;
+  font-size: 15px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
 .progress-track {
-  height: 20px;
-  padding: 2px;
-  background: var(--face);
-  box-shadow: var(--sunken);
+  position: relative;
+  z-index: 2;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(8, 14, 30, 0.55);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.6),
+    inset 0 -1px 0 rgba(var(--sky-light) / 0.12);
   overflow: hidden;
 }
 
@@ -333,42 +557,74 @@ body {
   display: block;
   height: 100%;
   width: 0;
-  background: repeating-linear-gradient(
-    90deg,
-    var(--title-a) 0 10px,
-    transparent 10px 12px
-  );
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4cc9f0, #7b6cf6 55%, #f472b6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 0 12px rgba(124, 108, 246, 0.55);
+  transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* --------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
    Ultimas fotos
    -------------------------------------------------------------------------- */
 
-.group-box {
-  margin: 0;
-  padding: 10px 8px 8px;
-  border: 2px groove var(--light);
+.recent {
+  padding: 14px 16px 12px;
+  border-radius: var(--radius-md);
+}
+
+.recent-head,
+.recent-body {
+  position: relative;
+  z-index: 2;
+}
+
+.recent-head {
   display: flex;
-  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.recent-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.counters {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.counters .dot {
+  opacity: 0.5;
+}
+
+.recent-body {
+  display: flex;
+  gap: 12px;
   align-items: flex-start;
 }
 
-.group-box legend {
-  padding: 0 4px;
-  font-size: 13px;
-}
-
 .thumb-frame {
-  width: 74px;
-  height: 74px;
+  width: 72px;
+  height: 72px;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--field);
-  box-shadow: var(--sunken);
-  padding: 2px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
+  background: rgba(8, 14, 30, 0.45);
+  box-shadow:
+    inset 0 1px 1px rgba(var(--key-light) / 0.22),
+    inset 0 0 0 1px rgba(var(--glass-body) / 0.08);
 }
 
 .thumb-frame img {
@@ -380,33 +636,37 @@ body {
 
 .thumb-frame span {
   font-size: 11px;
-  color: var(--text-disabled);
-  text-align: center;
+  color: var(--ink-faint);
 }
 
 .recent-list {
   flex: 1;
   min-width: 0;
   margin: 0;
-  padding: 2px;
+  padding: 0;
   list-style: none;
-  background: var(--field);
-  box-shadow: var(--sunken);
-  max-height: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 128px;
   overflow-y: auto;
-  font-size: 13px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .recent-empty {
-  padding: 4px;
-  color: var(--text-disabled);
+  font-size: 13px;
+  color: var(--ink-faint);
+  padding: 6px 2px;
 }
 
 .recent-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 4px;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 12px;
+  background: rgba(var(--glass-body) / 0.06);
+  box-shadow: inset 0 1px 0 rgba(var(--key-light) / 0.14);
 }
 
 .recent-info {
@@ -414,21 +674,21 @@ body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 5px;
 }
 
 .recent-name {
+  font-size: 12px;
+  color: var(--ink-soft);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
 }
 
 .recent-progress {
-  height: 10px;
-  padding: 1px;
-  background: var(--face);
-  box-shadow: var(--sunken-thin);
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(8, 14, 30, 0.55);
   overflow: hidden;
 }
 
@@ -436,98 +696,76 @@ body {
   display: block;
   height: 100%;
   width: 0;
-  background: repeating-linear-gradient(
-    90deg,
-    var(--title-a) 0 6px,
-    transparent 6px 8px
-  );
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4cc9f0, #7b6cf6);
+  transition: width 200ms ease;
 }
 
 .recent-badge {
   flex: none;
   font-size: 11px;
-  padding: 1px 4px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(var(--glass-body) / 0.1);
+  color: var(--ink-soft);
+  white-space: nowrap;
 }
 
-.recent-item.uploading {
-  background: var(--title-a);
-  color: var(--light);
+.recent-item.queued .recent-badge {
+  color: var(--ink-faint);
 }
 
-.recent-item.uploading .recent-progress {
-  background: var(--title-b);
-}
-
-.recent-item.uploading .recent-progress > span {
-  background: repeating-linear-gradient(
-    90deg,
-    var(--light) 0 6px,
-    transparent 6px 8px
-  );
+.recent-item.uploading .recent-badge {
+  color: #9fd4ff;
+  background: rgba(76, 201, 240, 0.16);
 }
 
 .recent-item.done .recent-badge {
   color: var(--ok);
-  font-weight: 700;
+  background: rgba(92, 224, 168, 0.16);
 }
 
 .recent-item.error .recent-badge {
   color: var(--error);
-  font-weight: 700;
+  background: rgba(255, 123, 138, 0.16);
 }
 
-/* --------------------------------------------------------------------------
-   Pie: pista y barra de estado
+/* -----------------------------------------------------------------------------
+   Pie
    -------------------------------------------------------------------------- */
 
-.hint {
-  margin: 0;
-  padding: 0 2px;
-  font-size: 12px;
-  color: #303030;
-}
-
-.status-bar {
+.app-footer {
   display: flex;
-  gap: 2px;
-  padding: 2px;
-  margin-top: auto;
-  font-size: 12px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 6px;
+  text-align: center;
 }
 
-.status-cell {
-  padding: 3px 5px;
-  background: var(--face);
-  box-shadow: var(--sunken-thin);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.status-line {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--ink-soft);
 }
 
-.status-cell-wide {
-  flex: 1;
-  min-width: 0;
-}
-
-#statusText.ok {
+.status-line.ok {
   color: var(--ok);
 }
 
-#statusText.warning {
+.status-line.warning {
   color: var(--warning);
 }
 
-#statusText.error {
-  color: var(--error);
-  font-weight: 700;
-}
-
-#networkStatus {
+.status-line.error {
   color: var(--error);
 }
 
-#networkStatus.online {
-  color: var(--ok);
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
 }
 
 .visually-hidden {
@@ -543,19 +781,24 @@ body {
   border: 0;
 }
 
-/* Pantallas grandes: la ventana se comporta como una ventana de escritorio. */
-@media (min-width: 640px) {
-  body {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 16px;
-  }
+/* -----------------------------------------------------------------------------
+   Reservas
+   Sin backdrop-filter el vidrio no existe: se sustituye por un solido oscuro
+   con el mismo canto Fresnel, que sigue siendo legible.
+   -------------------------------------------------------------------------- */
 
-  .window {
-    width: min(460px, 100%);
-    min-height: 0;
-    max-height: calc(100dvh - 32px);
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .glass,
+  .glass-button {
+    background:
+      linear-gradient(158deg, rgba(24, 32, 58, 0.92), rgba(14, 20, 40, 0.94)) padding-box,
+      linear-gradient(
+          158deg,
+          rgba(var(--key-light) / 0.6),
+          rgba(var(--glass-body) / 0.08) 40%,
+          rgba(var(--sky-light) / 0.4)
+        )
+        border-box;
   }
 }
 

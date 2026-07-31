@@ -63,9 +63,20 @@
         </div>
       </section>
 
-      <section class="native-panel" aria-label="Captura nativa">
-        <div class="native-camera-icon" aria-hidden="true"></div>
-        <p id="cameraMessage">Toca Disparar para abrir la camara nativa trasera.</p>
+      <section class="viewer-panel" aria-label="Visor de camara">
+        <div class="viewer-frame" id="viewerFrame">
+          <video id="viewer" playsinline autoplay muted disablepictureinpicture hidden></video>
+
+          <div class="camera-fallback" id="cameraFallback" hidden>
+            <div class="native-camera-icon" aria-hidden="true"></div>
+            <p id="cameraMessage">Abriendo la camara...</p>
+            <div class="fallback-actions">
+              <button class="secondary-button" id="retryCameraButton" type="button">Reintentar camara</button>
+              <button class="secondary-button" id="nativeCameraButton" type="button">Usar camara nativa</button>
+            </div>
+          </div>
+        </div>
+        <p class="capture-quality" id="captureQuality" hidden></p>
       </section>
 
       <section class="actions" aria-label="Acciones principales">
@@ -74,7 +85,7 @@
           <span>Conectar Google</span>
         </button>
 
-        <button class="primary-button capture-button" id="captureButton" type="button" disabled>
+        <button class="primary-button capture-button" id="captureButton" type="button">
           <span class="shutter-ring" aria-hidden="true"></span>
           <span>Disparar</span>
         </button>

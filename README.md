@@ -2,11 +2,22 @@
 
 CamToDrive es una web app estatica, sin backend y sin build step, pensada para GitHub Pages y uso movil. Mantiene una camara continua en pagina con `getUserMedia`, permite disparar varias fotos sin cerrar la camara y sube cada captura en segundo plano a una carpeta fija de Google Drive definida por `FOLDER_ID` en `config.js`.
 
+## Calidad de imagen: lee esto primero
+
+La camara continua **no** entrega la misma calidad que la camara nativa del telefono. Captura un fotograma del stream de video, sin HDR ni el procesado fotografico del sistema. La app hace todo lo posible por acercarse:
+
+- Pide la maxima resolucion que declare el dispositivo (`track.getCapabilities()` + `applyConstraints`).
+- Usa `ImageCapture.takePhoto()` cuando existe (Chrome/Android): esa ruta entrega una foto del sensor sin pasar por canvas.
+- Cuando no existe (Safari/iOS) dibuja el fotograma en canvas y codifica JPEG con `CAPTURE_QUALITY` (por defecto 1, el maximo).
+- La etiqueta bajo el visor muestra en todo momento la resolucion real y si la foto viene del sensor o de un fotograma recomprimido.
+
+Si en algun momento quieres calidad 100% nativa (archivo original del telefono, HEIC incluido), esta el fallback de camara nativa: aparece cuando `getUserMedia` falla y usa `<input type="file" capture="environment">`, que sube el `File` tal cual, sin recomprimir.
+
 ## Archivos principales
 
-- `index.html`: estructura de la app, visor de camara continuo, fallback nativo, meta tags PWA/iOS y carga de GIS.
-- `config.js`: `CLIENT_ID`, `FOLDER_ID` y `FOLDER_NAME` configurables.
-- `app.js`: autenticacion OAuth, captura con `ImageCapture` o canvas, cola IndexedDB, subida multipart a Drive, concurrencia limitada y reintentos.
+- `index.html`: estructura de la app, visor de camara continuo, panel de fallback nativo, meta tags PWA/iOS y carga de GIS.
+- `config.js`: `CLIENT_ID`, `FOLDER_ID`, `FOLDER_NAME`, resolucion ideal y calidad de captura.
+- `app.js`: autenticacion OAuth, camara continua, captura con `ImageCapture` o canvas, cola IndexedDB, subida multipart/resumable a Drive, concurrencia limitada y reintentos.
 - `styles.css`: UI mobile-first con visor principal, botones grandes, contadores y estados visibles.
 - `manifest.webmanifest`: instalacion PWA.
 - `service-worker.js`: cache del shell estatico para abrir la app offline.
@@ -78,15 +89,18 @@ La app usa rutas relativas (`./`), asi que funciona bajo subpath de GitHub Pages
 4. Pulsa **Disparar** tantas veces como necesites; la camara sigue abierta.
 5. Observa los contadores de pendientes/subiendo y el estado reciente de cada disparo.
 
-Si `getUserMedia` falla o el permiso fue denegado, la app muestra **Reintentar** y **Usar camara nativa** como fallback con `capture="environment"`.
+Si `getUserMedia` falla o el permiso fue denegado, la app muestra **Reintentar camara** y **Usar camara nativa** como fallback con `capture="environment"`.
 
 ## Funcionamiento offline
 
-- El service worker cachea el shell estatico.
+- El service worker cachea el shell estatico (solo respuestas correctas).
 - Cada foto se guarda primero en IndexedDB.
 - La subida a Google Drive requiere conexion y token vigente.
-- Si una subida falla, la foto queda pendiente y se reintenta con backoff al volver la red o al reconectar Google.
+- Si una subida falla, la foto queda pendiente y se reintenta con backoff, al volver la red, al reconectar Google o pasados 45 segundos.
 - La cola sube hasta 3 fotos en paralelo para vaciar pendientes sin bloquear la captura.
+- Los blobs se leen de IndexedDB de uno en uno, asi que una cola larga no llena la memoria del telefono.
+- Archivos de hasta 5 MB van por subida multipart; por encima se usa una sesion resumable de Drive.
+- Cada foto lleva un identificador propio en `appProperties`, asi que un reintento nunca crea un duplicado en Drive.
 
 ## Notas de seguridad y privacidad
 
@@ -94,3 +108,4 @@ Si `getUserMedia` falla o el permiso fue denegado, la app muestra **Reintentar**
 - El token OAuth vive solo en memoria del navegador y expira alrededor de una hora despues.
 - Si Google devuelve 401 o el token expira, vuelve a aparecer **Conectar Google**.
 - Al ocultar la app, el stream de camara se libera; al volver, se intenta abrir nuevamente.
+- La carpeta destino no deberia estar compartida como "cualquiera con el enlace": el `FOLDER_ID` viaja en `config.js`, que es publico. Comparte la carpeta solo con las cuentas que suben fotos.

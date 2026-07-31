@@ -1,4 +1,4 @@
-const CACHE_NAME = "camtodrive-shell-v4";
+const CACHE_NAME = "camtodrive-shell-v5";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -52,7 +52,10 @@ async function networkFirst(request) {
   const cache = await caches.open(CACHE_NAME);
   try {
     const response = await fetch(request);
-    cache.put(request, response.clone());
+    // Solo se cachean respuestas validas: un 404 o un 500 cacheado dejaria la app rota.
+    if (response && response.ok) {
+      cache.put(request, response.clone());
+    }
     return response;
   } catch (_error) {
     const cached = await cache.match(request);

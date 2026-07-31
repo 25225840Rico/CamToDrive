@@ -16,8 +16,22 @@ const FOLDER_NAME = "Fotos App";
 // Si se deja vacio (""), la app crea/reutiliza una carpeta llamada FOLDER_NAME.
 const FOLDER_ID = "1BCGezpp8M6vuQN4TL_l-atJtLPEOJ0f2";
 
+// Resolucion que se le pide a la camara continua. La app pide siempre el maximo que el
+// dispositivo acepte; estos valores son el "ideal" inicial antes de subir al maximo real.
+const CAPTURE_IDEAL_WIDTH = 4096;
+const CAPTURE_IDEAL_HEIGHT = 3072;
+
+// Calidad del JPEG cuando la foto se saca del visor continuo (iOS Safari).
+// 1 = maxima calidad posible del encoder (archivos mas grandes).
+// Nota: esta ruta SIEMPRE pierde calidad frente a la camara nativa del sistema, porque
+// captura un fotograma de video (sin HDR ni el procesado fotografico del telefono).
+const CAPTURE_QUALITY = 1;
+
 const CONFIG = Object.freeze({
   CLIENT_ID,
   FOLDER_NAME,
   FOLDER_ID,
+  CAPTURE_IDEAL_WIDTH,
+  CAPTURE_IDEAL_HEIGHT,
+  CAPTURE_QUALITY,
 });

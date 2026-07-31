@@ -2,58 +2,52 @@
 
 CamToDrive sigue siendo una web app estatica sin backend, frameworks ni build step, lista para publicar en GitHub Pages con rutas relativas.
 
-## Encargo 4 - auditor, debugger, limpiador y progreso
+## Encargo 5 - camara continua + arreglos de la revision
 
-### Fase 1 - Auditor
+### Camara que no se cierra
 
-- Confirmado: la subida multipart usaba `fetch`, por lo que no podia reportar progreso real de subida.
-- Confirmado: la miniatura revocaba el `objectURL` al reemplazar la foto, pero no al salir de la pagina.
-- Confirmado: los pendientes antiguos que arrancaban desde IndexedDB podian subir sin aparecer en "disparos recientes".
-- Confirmado: los estados recientes solo distinguian `Subiendo`, sin porcentaje accesible por foto.
-- Confirmado: el service worker seguia en cache v3 y debia pasar a v4 para refrescar el shell.
-- Sin hallazgos prohibidos: no se encontro captura embebida, recomposicion ni recodificacion en `app.js`.
+- Vuelve el visor continuo con `getUserMedia` (`facingMode: environment`): se dispara las veces que haga falta sin que la camara se cierre entre fotos.
+- Antes de capturar nada, la app sube el track a la maxima resolucion que declare el dispositivo: lee `track.getCapabilities()` y aplica `applyConstraints({width, height})` con esos maximos. Verificado en Chrome: la camara pasa de la resolucion por defecto a 3840x2160.
+- Ruta de captura por prioridad:
+  1. `ImageCapture.takePhoto()` con la resolucion maxima de `getPhotoCapabilities()`. Entrega una foto del sensor sin pasar por canvas (Chrome/Android).
+  2. Si no existe `ImageCapture` (Safari/iOS), dibuja el fotograma en canvas y codifica JPEG con `CAPTURE_QUALITY` (por defecto 1).
+- `requestVideoFrameCallback` espera el siguiente fotograma pintado para no capturar uno viejo del buffer.
+- La etiqueta bajo el visor muestra resolucion real, megapixeles y si la foto viene del sensor o de un fotograma recomprimido.
+- El stream se libera al ocultar la app y se reabre al volver. Si el track termina solo, se muestra el panel de fallback.
+- La camara nativa sigue disponible como fallback (`<input type="file" capture="environment">`), que es la unica ruta con calidad 100% original.
 
-### Fase 2 - Debugger
+**Compromiso conocido y aceptado:** la captura desde el visor pierde calidad frente a la camara nativa del telefono (fotograma de video, sin HDR ni procesado fotografico). Es el precio de que la camara no se cierre.
 
-- Se revoca la URL temporal de la ultima miniatura en `pagehide` y antes de crear otra.
-- La cola ahora asegura una fila visible para cada foto que empieza a subir, incluso si viene de IndexedDB.
-- El HTTP 401 de la subida XHR limpia la sesion y lanza `AuthExpiredError`, igual que la ruta autorizada existente.
+### Arreglos de la revision del 2026-07-31
 
-### Fase 3 - Limpiador
+- **Memoria**: la cola ya no carga todos los blobs de golpe. `getPendingPhotoIds()` trae solo las claves y cada foto se lee justo antes de subirla; la referencia se suelta al terminar.
+- **Reintento**: si una foto agota sus intentos, se programa un reintento automatico a los 45 s (antes solo se reintentaba al recuperar red o al volver a la app).
+- **Archivos grandes**: multipart solo cubre hasta ~5 MB. Por encima de ese tamano se abre una sesion resumable (`uploadType=resumable`) y se sube con `PUT` reportando progreso igual que antes.
+- **Duplicados**: cada foto lleva un `uploadId` propio persistido en IndexedDB y escrito en `appProperties.camtodriveId`. Antes de cada reintento se consulta si ese archivo ya llego a Drive, asi que una respuesta perdida no crea una copia.
+- **Consentimiento**: tras el primer `consent` se guarda una marca y las reconexiones usan `prompt: ""`, sin repetir la pantalla completa de Google.
+- **404 inutil**: el reintento con otra carpeta solo se ejecuta cuando la carpeta se resolvio por nombre. Con `FOLDER_ID` fijo ya no se resube el archivo entero para nada.
+- **Service worker**: cache `camtodrive-shell-v5` y solo se cachean respuestas `ok` (antes podia quedar cacheado un 404).
+- **Documentacion**: README actualizado al comportamiento real.
 
-- Se unifico la actualizacion de disparos recientes para aceptar parches de estado/progreso.
-- Se centralizo el calculo y saneamiento de porcentajes para evitar valores fuera de rango.
-- Se mantuvieron los textos y flujo de captura nativa sin agregar frameworks ni build.
+### Pendiente que NO es codigo
 
-### Fase 4 - Barra de progreso
-
-- La subida multipart/related a Drive ahora usa `XMLHttpRequest`.
-- `xhr.upload` reporta `progress` por foto y actualiza una barra accesible en la lista de disparos recientes.
-- Se agrego una barra global de lote para las subidas activas.
-- La captura sigue sin bloquearse: la foto original se encola al instante y las subidas continuan en segundo plano con concurrencia 3 y backoff.
-- El service worker usa `camtodrive-shell-v4`.
+La carpeta de Drive esta compartida como "cualquiera con el enlace -> Editor" y su `FOLDER_ID` viaja en `config.js` dentro de un repo publico. Cualquiera que vea el repo puede abrir la carpeta y borrar las fotos. Hay que cambiar el compartido a personas concretas desde Google Drive; la app no necesita el enlace publico.
 
 ## Cambios de encargos anteriores
 
-- La captura vuelve a ser 100% nativa con `<input type="file" accept="image/*" capture="environment">` para abrir la camara trasera del sistema.
-- Se elimino por completo la captura en pagina: no hay stream de camara, visor embebido, APIs de captura por frame, redimensionado, recomposicion ni parametros de calidad.
-- El archivo que entrega la camara se trata como fuente unica de verdad: el `File` original se guarda directamente en IndexedDB y ese mismo blob se sube a Google Drive.
-- No se recomprime, no se recodifica, no se cambia formato, no se eliminan metadatos y no se fuerza JPEG. Si el iPhone entrega HEIC, se sube HEIC; si entrega JPEG, se sube JPEG.
+- Barra de progreso real por foto con `XMLHttpRequest` y `xhr.upload.onprogress`, mas una barra global de lote.
 - Los nombres de archivo usan timestamp con milisegundos y extension derivada del MIME real: `AAAA-MM-DD_HH-MM-SS-mmm.ext`.
-- La subida sigue en segundo plano con la cola existente, concurrencia limitada a 3 fotos y reintentos con backoff. Tomar otra foto no espera a que terminen las subidas.
-- Tras recibir una foto, la app intenta reabrir la camara nativa como best-effort. Si el navegador lo bloquea, el boton `Disparar` queda listo para un toque inmediato.
+- Subida en segundo plano con cola IndexedDB, concurrencia limitada a 3 fotos y reintentos con backoff. Tomar otra foto no espera a que terminen las subidas.
 - Se mantienen el boton `Conectar Google`, el scope `https://www.googleapis.com/auth/drive`, `CLIENT_ID`, `FOLDER_ID` y `FOLDER_NAME` de `config.js`.
-- Se actualizaron los textos y estilos para reflejar captura nativa, no visor continuo.
-- Se subio la version del cache del service worker a `camtodrive-shell-v3` para refrescar el shell estatico.
 
 ## Archivos principales
 
-- `index.html`: estructura de una pagina con boton de disparo nativo, input file/capture, contadores y lista de disparos recientes.
-- `config.js`: constantes `CLIENT_ID`, `FOLDER_ID` y `FOLDER_NAME` configurables.
-- `app.js`: autenticacion con Google Identity Services, captura nativa por `File`, cola IndexedDB, subida multipart a Drive, concurrencia limitada, reintentos y reconexion.
-- `styles.css`: interfaz mobile-first con accion de disparo grande, panel de captura nativa, estados de cola y modo claro/oscuro.
+- `index.html`: una pagina con visor continuo, panel de fallback nativo, contadores y lista de disparos recientes.
+- `config.js`: `CLIENT_ID`, `FOLDER_NAME`, `FOLDER_ID`, `CAPTURE_IDEAL_WIDTH/HEIGHT` y `CAPTURE_QUALITY`.
+- `app.js`: Google Identity Services, camara continua, captura, cola IndexedDB, subida multipart/resumable, concurrencia, reintentos y reconexion.
+- `styles.css`: interfaz mobile-first con visor, estados de cola y modo claro/oscuro.
 - `manifest.webmanifest`: manifest PWA con scope/start URL relativos.
-- `service-worker.js`: cache del shell estatico version v3.
+- `service-worker.js`: cache del shell estatico version v5.
 - `icons/`: iconos SVG y PNG para PWA y `apple-touch-icon`.
 
 ## Pendiente para el usuario

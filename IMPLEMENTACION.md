@@ -2,6 +2,77 @@
 
 CamToDrive sigue siendo una web app estatica sin backend, frameworks ni build step, lista para publicar en GitHub Pages con rutas relativas.
 
+## Encargo 9 - interfaz sin marcos y marco de foco robusto
+
+### Sin marcos
+
+El visor ya no vive dentro de un panel: `.stage` es un contenedor fijo a pantalla completa con
+el video en `object-fit: cover`, y los controles viven en `.hud`, una capa hermana tambien
+fija con `pointer-events: none`. Solo los elementos que se tocan reactivan el puntero, asi que
+tocar la imagen sigue llegando al visor (que es lo que reanuda la camara en pausa).
+
+Consecuencia que conviene tener presente: con `cover` la pantalla recorta los lados del
+fotograma. Lo que se ve esta garantizado dentro de la foto, pero la foto guarda **mas** campo
+del que muestra la pantalla, nunca menos.
+
+El obturador va en una rejilla de tres columnas (`1fr auto 1fr`) para quedar centrado en la
+pantalla aparezca o no el boton de Google a su lado. El bloque inferior lleva un degradado de
+contraste: sin el, el texto blanco desaparece sobre una escena clara.
+
+### Marco de foco
+
+Ahora abarca el encuadre util completo (`inset: var(--hud-top) 14px var(--hud-bottom)`), no un
+recuadro central. Se dibuja con dos pseudo-elementos: `::before` es el rectangulo completo al
+40 % de opacidad y `::after` es el mismo rectangulo con borde de 4 px enmascarado con cuatro
+cuadrados de 42 px, de modo que solo asoman las cantoneras. Es la convencion de visor de camara
+y deja la escena despejada. La sombra de legibilidad va en los pseudo-elementos y no como
+`filter` sobre el marco entero: un filtro a pantalla completa por encima del video obliga al
+compositor a rehacer esa capa.
+
+Ojo con la distincion: el marco muestra el estado del foco, pero la nitidez se sigue midiendo
+en el centro de la escena, que es donde enfoca la camara.
+
+### Foco mas estable
+
+- Histeresis: se entra en verde con ratio 0.82 y se sale con 0.70. Antes bastaba con caer del
+  umbral unico para soltar el foco, y el pulso de la mano hacia parpadear el marco.
+- Confirmacion en ambos sentidos: hacen falta dos lecturas seguidas para cambiar de estado,
+  tanto para fijar como para soltar.
+- Cadencia adaptativa (`setTimeout` encadenado en vez de `setInterval`): 300 ms buscando,
+  700 ms con el foco fijado.
+- Coste por lectura a la cuarta parte: se mide uno de cada dos pixeles en ambos ejes, pero la
+  diferencia se sigue tomando contra el vecino inmediato. Se muestrea menos, no se mide mas
+  grueso: la frecuencia espacial evaluada es la misma y la media converge igual.
+
+### Otra fuga de bateria cerrada
+
+Con un overlay a pantalla completa abierto (vista previa o foto del historial) el visor seguia
+decodificando fotogramas invisibles, y ademas el `backdrop-filter` del overlay se recalculaba
+con cada uno. Ahora `pauseViewerPlayback()` / `resumeViewerPlayback()` pausan el elemento de
+video mientras la capa esta abierta; la camara sigue abierta, asi que volver es instantaneo.
+
+### Auditoria de correccion (asistente externo, revisada y aceptada)
+
+Una segunda pasada centrada en fugas y consistencia encontro cuatro fallos reales, todos en
+caminos de error (por eso no se ven en el uso normal, y por eso importan):
+
+- Si `enqueuePhoto` fallaba, la miniatura ya creada quedaba sin liberar. Ahora se revoca antes
+  de propagar el error.
+- El `ImageBitmap` solo se cerraba en el camino feliz; si `drawImage` o la codificacion
+  fallaban, quedaba retenido. Pasa a cerrarse en `finally`.
+- Las operaciones de IndexedDB resolvian en `request.onsuccess`, que solo dice que la peticion
+  avanzo, no que la transaccion se confirmo. Una transaccion abortada al confirmar (cuota, por
+  ejemplo) daba una foto por encolada sin estarlo. Ahora resuelven en `tx.oncomplete`, y
+  `onabort` rechaza.
+- La conexion a IndexedDB no atendia `versionchange`, asi que otra pestaña no podia migrar la
+  base. Ahora se cierra y se descarta la promesa cacheada; tambien se descarta si `open` falla,
+  para que el siguiente intento pueda reabrir.
+
+Se descarto deliberadamente partir `app.js` en modulos ES: todo comparte estado mutable y DOM
+global, y sin poder probar en el telefono el riesgo de regresion supera la ganancia.
+
+Cache del shell a v10.
+
 ## Encargo 8 - foco, confirmacion, bateria y borrado
 
 ### Bateria: tres fugas, tres arreglos

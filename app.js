@@ -1117,7 +1117,15 @@
     // La miniatura se genera una sola vez y pesa unos pocos KB: guardar el blob completo
     // de cada foto reciente en memoria reventaria un telefono en pocas fotos.
     const thumbUrl = await createThumbnailUrl(file);
-    const pendingId = await enqueuePhoto(file, fileName);
+    let pendingId = null;
+    try {
+      pendingId = await enqueuePhoto(file, fileName);
+    } catch (error) {
+      if (thumbUrl) {
+        URL.revokeObjectURL(thumbUrl);
+      }
+      throw error;
+    }
     addRecentPhoto({
       id: pendingId,
       fileName,
@@ -1140,8 +1148,9 @@
   const THUMBNAIL_MAX_SIDE = 320;
 
   async function createThumbnailUrl(blob) {
+    let bitmap = null;
     try {
-      const bitmap = await decodeImage(blob);
+      bitmap = await decodeImage(blob);
       if (!bitmap) {
         return null;
       }
@@ -1154,16 +1163,20 @@
       canvas.height = Math.max(1, Math.round(height * scale));
 
       const context = canvas.getContext("2d", { alpha: false });
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      if (typeof bitmap.close === "function") {
-        bitmap.close();
+      if (!context) {
+        return null;
       }
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 
       const thumbBlob = await canvasToBlob(canvas, "image/jpeg", 0.7);
       return thumbBlob ? URL.createObjectURL(thumbBlob) : null;
     } catch (error) {
       console.debug("No se pudo generar la miniatura.", error);
       return null;
+    } finally {
+      if (bitmap && typeof bitmap.close === "function") {
+        bitmap.close();
+      }
     }
   }
 
@@ -1192,6 +1205,9 @@
   }
 
   function addRecentPhoto(photo) {
+    state.recentPhotos
+      .filter((item) => item.id === photo.id)
+      .forEach(releaseRecentPhoto);
     state.recentPhotos = state.recentPhotos.filter((item) => item.id !== photo.id);
     state.recentPhotos.unshift({
       progress: null,
@@ -1223,6 +1239,13 @@
     const photo = state.recentPhotos.find((item) => item.id === id);
     if (photo) {
       const patch = typeof updates === "string" ? { status: updates } : updates;
+      if (
+        Object.prototype.hasOwnProperty.call(patch, "thumbUrl") &&
+        photo.thumbUrl &&
+        photo.thumbUrl !== patch.thumbUrl
+      ) {
+        URL.revokeObjectURL(photo.thumbUrl);
+      }
       Object.assign(photo, patch);
       trimRecentPhotos();
       renderRecentPhotos();
@@ -2081,8 +2104,18 @@
         }
       };
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        db.onversionchange = () => {
+          db.close();
+          dbPromise = null;
+        };
+        resolve(db);
+      };
+      request.onerror = () => {
+        dbPromise = null;
+        reject(request.error);
+      };
     });
 
     return dbPromise;
@@ -2092,6 +2125,7 @@
     const db = await openDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
+      let id = null;
       const request = tx.objectStore(STORE_NAME).add({
         blob: file,
         fileName,
@@ -2101,9 +2135,13 @@
         createdAt: Date.now(),
       });
 
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        id = request.result;
+      };
       request.onerror = () => reject(request.error);
-      tx.onerror = () => reject(tx.error);
+      tx.oncomplete = () => resolve(id);
+      tx.onerror = () => reject(tx.error || request.error);
+      tx.onabort = () => reject(tx.error || request.error);
     });
   }
 
@@ -2136,9 +2174,10 @@
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
       const request = tx.objectStore(STORE_NAME).put(photo);
-      request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
-      tx.onerror = () => reject(tx.error);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || request.error);
+      tx.onabort = () => reject(tx.error || request.error);
     });
   }
 
@@ -2147,9 +2186,10 @@
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
       const request = tx.objectStore(STORE_NAME).delete(id);
-      request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
-      tx.onerror = () => reject(tx.error);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || request.error);
+      tx.onabort = () => reject(tx.error || request.error);
     });
   }
 

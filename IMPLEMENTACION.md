@@ -2,6 +2,17 @@
 
 CamToDrive sigue siendo una web app estatica sin backend, frameworks ni build step, lista para publicar en GitHub Pages con rutas relativas.
 
+## Encargo 6 - interfaz Windows 98 (solo movil)
+
+- Toda la app vive dentro de una unica "ventana" Win98: barra de titulo azul, cuerpo gris y barra de estado abajo. Fondo teal clasico.
+- Jerarquia mas simple: visor grande arriba, **Disparar** como boton dominante (68 px de alto), **Conectar Google** encima y desaparece al autenticarse.
+- Los contadores dejaron de ser tarjetas: van en la barra de estado (`estado | N en cola | N subiendo | red`), como en Windows.
+- Ultimas fotos es un groupbox con la miniatura y un listbox hundido; la foto que se esta subiendo se resalta en azul de seleccion.
+- Barras de progreso segmentadas en bloques, como las de Windows 98.
+- Se elimino el modo oscuro y las sombras/redondeos: la paleta es fija (#c0c0c0 / #000080 / #008080) y el CSS quedo mas corto.
+- `styles.css` no depende de ninguna fuente externa: `MS Sans Serif` con `Tahoma`/`Verdana` de respaldo (Verdana existe en iOS).
+- Cache del shell subida a `camtodrive-shell-v6` y `theme_color` del manifest a `#008080`.
+
 ## Encargo 5 - camara continua + arreglos de la revision
 
 ### Camara que no se cierra

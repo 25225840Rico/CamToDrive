@@ -18,7 +18,7 @@ Si en algun momento quieres calidad 100% nativa (archivo original del telefono, 
 - `index.html`: estructura de la app, visor de camara continuo, panel de fallback nativo, meta tags PWA/iOS y carga de GIS.
 - `config.js`: `CLIENT_ID`, `FOLDER_ID`, `FOLDER_NAME`, resolucion ideal y calidad de captura.
 - `app.js`: autenticacion OAuth, camara continua, captura con `ImageCapture` o canvas, cola IndexedDB, subida multipart/resumable a Drive, concurrencia limitada y reintentos.
-- `styles.css`: UI mobile-first con visor principal, botones grandes, contadores y estados visibles.
+- `styles.css`: UI mobile-first con estetica Windows 98 (ventana con barra de titulo, botones biselados, barra de estado), visor principal y botones grandes.
 - `manifest.webmanifest`: instalacion PWA.
 - `service-worker.js`: cache del shell estatico para abrir la app offline.
 - `icons/`: iconos SVG y PNG para PWA/iOS.

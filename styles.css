@@ -114,7 +114,9 @@ body {
     radial-gradient(46% 38% at 76% 82%, rgba(217, 70, 239, 0.42), transparent 70%),
     radial-gradient(40% 34% at 12% 78%, rgba(45, 212, 191, 0.38), transparent 72%),
     var(--void);
-  filter: blur(30px) saturate(125%);
+  /* Sin filter: blur(). Un blur de pantalla completa obliga al compositor a rehacer una
+     capa enorme cada vez que el video cambia de fotograma, y estos gradientes ya son
+     suaves por definicion. Era una de las fugas de bateria. */
 }
 
 /* -----------------------------------------------------------------------------
@@ -147,9 +149,11 @@ body {
   border: 1px solid transparent;
   border-radius: var(--radius-md);
 
-  /* (6) Refraccion difusa + ganancia de croma del medio denso. */
-  -webkit-backdrop-filter: blur(22px) saturate(180%) brightness(1.06);
-  backdrop-filter: blur(22px) saturate(180%) brightness(1.06);
+  /* (6) Refraccion difusa + ganancia de croma del medio denso.
+     El radio se mantiene bajo a proposito: el coste en GPU crece con el radio y el
+     telefono tiene que sostenerlo mientras la camara corre. */
+  -webkit-backdrop-filter: blur(14px) saturate(170%);
+  backdrop-filter: blur(14px) saturate(170%);
 
   box-shadow:
     /* (5) Caustica: luz concentrada que sale por el lado opuesto a la fuente. */
@@ -198,8 +202,9 @@ body {
 .app {
   max-width: 480px;
   margin: 0 auto;
+  /* El hueco de abajo deja sitio al dock fijo del disparador. */
   padding: calc(14px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
-    calc(18px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+    calc(128px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -247,11 +252,15 @@ body {
   position: relative;
   width: 100%;
   aspect-ratio: 3 / 4;
-  max-height: 52vh;
+  max-height: 46vh;
   padding: 5px;
   border-radius: var(--radius-lg);
   overflow: hidden;
   contain: paint;
+  /* El video tapa el 100% del marco, asi que aqui el backdrop-filter no se ve pero si se
+     paga: el compositor lo recalcularia en cada fotograma de la camara. */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 /* Aqui el vidrio esta DELANTE de la imagen: el reflejo y la franja cromatica
@@ -268,6 +277,64 @@ body {
   display: block;
   border-radius: calc(var(--radius-lg) - 6px);
   background: #05070f;
+}
+
+/* -----------------------------------------------------------------------------
+   Indicador de foco
+   Ni Safari ni iOS dicen si el autofoco cerro, asi que app.js mide la nitidez del
+   centro del cuadro. Ambar = buscando, verde = la imagen esta en su punto.
+   -------------------------------------------------------------------------- */
+
+.focus-frame {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 46%;
+  aspect-ratio: 4 / 3;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  pointer-events: none;
+  border-radius: 14px;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.focus-frame.searching {
+  border: 1.5px solid rgba(255, 202, 107, 0.55);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.focus-frame.locked {
+  border: 2px solid rgba(92, 224, 168, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.3),
+    0 0 16px rgba(92, 224, 168, 0.45);
+  transform: translate(-50%, -50%) scale(0.94);
+}
+
+.camera-paused {
+  position: absolute;
+  inset: 5px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+  border-radius: calc(var(--radius-lg) - 6px);
+  background: rgba(6, 10, 24, 0.72);
+}
+
+.paused-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.paused-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
 }
 
 .camera-fallback {
@@ -349,10 +416,30 @@ body {
    reflejo especular se desplaza porque la normal de la superficie gira.
    -------------------------------------------------------------------------- */
 
-.actions {
+/* Barra inferior fija: el disparador vive donde llega el pulgar. */
+.dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 10px;
+  padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(7, 11, 24, 0.92), rgba(7, 11, 24, 0));
+  pointer-events: none;
+}
+
+.dock > * {
+  pointer-events: auto;
+}
+
+.dock .connect-button {
+  min-height: 44px;
+  padding: 10px 18px;
+  font-size: 15px;
 }
 
 .glass-button {
@@ -486,30 +573,69 @@ body {
   font-weight: 700;
 }
 
-.capture-button {
-  min-height: 76px;
-  font-size: 20px;
-  font-weight: 600;
-  gap: 14px;
+/* Obturador: anillo de vidrio con la esfera roja dentro. */
+.shutter {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  padding: 6px;
+  border-radius: 50%;
+  border: 2px solid rgba(var(--key-light) / 0.7);
+  background: rgba(var(--glass-body) / 0.12);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  backdrop-filter: blur(12px) saturate(160%);
+  box-shadow:
+    0 16px 30px -16px rgba(6, 10, 24, 0.95),
+    inset 0 1px 1px rgba(var(--key-light) / 0.45);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform 120ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 120ms ease;
 }
 
 /* Esfera roja: sombreado difuso mas reflejo especular estrecho, misma luz. */
 .shutter-ring {
-  width: 30px;
-  height: 30px;
-  flex: none;
+  display: block;
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
   background:
     radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.85), transparent 34%),
     radial-gradient(circle at 62% 74%, #8f1020, #e0233c 62%, #ff5f6d);
   box-shadow:
-    0 0 16px rgba(255, 60, 90, 0.45),
-    inset 0 -2px 4px rgba(90, 0, 16, 0.6);
+    0 0 18px rgba(255, 60, 90, 0.4),
+    inset 0 -3px 6px rgba(90, 0, 16, 0.6);
+  transition: transform 120ms ease;
 }
 
-.capture-button:disabled .shutter-ring {
+.shutter:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.shutter:active:not(:disabled) .shutter-ring {
+  transform: scale(0.9);
+}
+
+.shutter:focus-visible {
+  outline: 2px solid rgba(var(--sky-light) / 0.75);
+  outline-offset: 4px;
+}
+
+.shutter:disabled {
+  cursor: not-allowed;
+}
+
+.shutter:disabled .shutter-ring {
   background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.4), transparent 40%),
     radial-gradient(circle at 62% 74%, #2b3346, #4a5468);
+  box-shadow: none;
+}
+
+/* Camara dormida: el obturador lo dice sin texto. */
+.shutter.paused .shutter-ring {
+  background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.35), transparent 40%),
+    radial-gradient(circle at 62% 74%, #3a2f10, #7a5f1e);
   box-shadow: none;
 }
 
@@ -570,14 +696,7 @@ body {
    -------------------------------------------------------------------------- */
 
 .recent {
-  padding: 14px 16px 12px;
-  border-radius: var(--radius-md);
-}
-
-.recent-head,
-.recent-body {
-  position: relative;
-  z-index: 2;
+  padding: 0 2px;
 }
 
 .recent-head {
@@ -585,14 +704,15 @@ body {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .recent-head h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.01em;
+  color: var(--ink-soft);
 }
 
 .counters {
@@ -606,89 +726,107 @@ body {
   opacity: 0.5;
 }
 
-.recent-body {
+/* Tira horizontal de miniaturas: el historial ocupa una fila, no media pantalla. */
+.recent-list {
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
 
-.thumb-frame {
-  width: 72px;
-  height: 72px;
+.recent-list::-webkit-scrollbar {
+  display: none;
+}
+
+.recent-empty {
+  font-size: 12px;
+  color: var(--ink-faint);
+  padding: 18px 2px;
+}
+
+.shot {
   flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  background: rgba(8, 14, 30, 0.45);
-  box-shadow:
-    inset 0 1px 1px rgba(var(--key-light) / 0.22),
-    inset 0 0 0 1px rgba(var(--glass-body) / 0.08);
 }
 
-.thumb-frame img {
+.shot-button {
+  position: relative;
+  display: block;
+  width: 58px;
+  height: 58px;
+  padding: 0;
+  border: 1px solid rgba(var(--glass-body) / 0.14);
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(8, 14, 30, 0.5);
+  box-shadow: inset 0 1px 1px rgba(var(--key-light) / 0.2);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 120ms ease;
+}
+
+.shot-button:active {
+  transform: scale(0.94);
+}
+
+.shot-button img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
 
-.thumb-frame span {
-  font-size: 11px;
-  color: var(--ink-faint);
-}
-
-.recent-list {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 128px;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-.recent-empty {
-  font-size: 13px;
-  color: var(--ink-faint);
-  padding: 6px 2px;
-}
-
-.recent-item {
+.shot-placeholder {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border-radius: 12px;
-  background: rgba(var(--glass-body) / 0.06);
-  box-shadow: inset 0 1px 0 rgba(var(--key-light) / 0.14);
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
 }
 
-.recent-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.recent-name {
-  font-size: 12px;
+.shot-badge {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: rgba(6, 10, 24, 0.78);
   color: var(--ink-soft);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.shot.queued .shot-badge {
+  color: var(--ink-faint);
+}
+
+.shot.uploading .shot-badge {
+  color: #9fd4ff;
+}
+
+.shot.done .shot-badge {
+  color: var(--ok);
+}
+
+.shot.error .shot-badge {
+  color: var(--error);
 }
 
 .recent-progress {
-  height: 5px;
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  height: 4px;
   border-radius: 999px;
-  background: rgba(8, 14, 30, 0.55);
+  background: rgba(6, 10, 24, 0.75);
   overflow: hidden;
 }
 
@@ -701,34 +839,131 @@ body {
   transition: width 200ms ease;
 }
 
-.recent-badge {
-  flex: none;
-  font-size: 11px;
+/* -----------------------------------------------------------------------------
+   Capas a pantalla completa: revisar la foto recien tomada y ver una del historial
+   -------------------------------------------------------------------------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  background: rgba(4, 7, 16, 0.82);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.overlay-body {
+  width: 100%;
+  max-width: 440px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  overflow-y: auto;
+}
+
+.overlay-body > * {
+  position: relative;
+  z-index: 2;
+}
+
+.overlay-body img {
+  width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: #05070f;
+}
+
+.overlay-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.overlay-titles {
+  min-width: 0;
+}
+
+.overlay-name {
+  margin: 0;
+  font-size: 14px;
   font-weight: 600;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: rgba(var(--glass-body) / 0.1);
-  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.recent-item.queued .recent-badge {
+.overlay-meta {
+  margin: 0;
+  font-size: 12px;
   color: var(--ink-faint);
+  text-align: center;
 }
 
-.recent-item.uploading .recent-badge {
-  color: #9fd4ff;
-  background: rgba(76, 201, 240, 0.16);
+.overlay-head .overlay-meta {
+  text-align: left;
 }
 
-.recent-item.done .recent-badge {
-  color: var(--ok);
-  background: rgba(92, 224, 168, 0.16);
+.overlay-close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(var(--glass-body) / 0.12);
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
 }
 
-.recent-item.error .recent-badge {
+.overlay-warning {
+  margin: 0;
+  font-size: 12px;
+  text-align: center;
+  color: var(--warning);
+}
+
+.overlay-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.overlay-actions .glass-button {
+  flex: 1;
+  min-height: 48px;
+  text-decoration: none;
+}
+
+.glass-button.primary {
+  background:
+    linear-gradient(158deg, rgba(92, 224, 168, 0.34), rgba(76, 201, 240, 0.22)) padding-box,
+    linear-gradient(
+        158deg,
+        rgba(var(--key-light) / 0.85),
+        rgba(var(--glass-body) / 0.12) 30%,
+        rgba(var(--sky-light) / 0.6)
+      )
+      border-box;
+}
+
+.glass-button.danger {
   color: var(--error);
-  background: rgba(255, 123, 138, 0.16);
+}
+
+.glass-button.danger.armed {
+  background:
+    linear-gradient(158deg, rgba(255, 123, 138, 0.4), rgba(255, 90, 110, 0.25)) padding-box,
+    linear-gradient(158deg, rgba(var(--key-light) / 0.85), rgba(255, 123, 138, 0.5)) border-box;
+  color: var(--ink);
 }
 
 /* -----------------------------------------------------------------------------

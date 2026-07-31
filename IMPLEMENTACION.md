@@ -2,6 +2,44 @@
 
 CamToDrive sigue siendo una web app estatica sin backend, frameworks ni build step, lista para publicar en GitHub Pages con rutas relativas.
 
+## Encargo 8 - foco, confirmacion, bateria y borrado
+
+### Bateria: tres fugas, tres arreglos
+
+El diagnostico, de mayor a menor impacto:
+
+1. **El visor corria a la resolucion maxima del sensor.** `maximizeTrackResolution()` pedia literalmente el maximo declarado (en un iPhone, ~12 MP a 30 fps) para mostrarlo en un recuadro de unos 350 px. El ISP y el codificador trabajaban a tope de forma permanente. Ahora `tuneTrackResolution()` respeta el tope `CAPTURE_MAX_PIXELS` (8 MP por defecto) manteniendo la relacion de aspecto.
+2. **La camara no se apagaba nunca.** Solo se liberaba al ocultar la app. Ahora se suspende sola tras `CAMERA_IDLE_TIMEOUT_SECONDS` (60 s) sin actividad y el visor muestra "Camara en pausa"; un toque la reanuda. Este es el ahorro mas grande, porque un stream abierto consume aunque no se dispare.
+3. **El CSS obligaba a recomponer capas enormes en cada fotograma.** El fondo tenia `filter: blur(30px)` a pantalla completa y el marco del visor un `backdrop-filter` que ni se ve (el video lo tapa entero) pero si se paga. Se quito el blur del fondo, se anulo el `backdrop-filter` del marco y se bajo el radio general de 22 px a 14 px.
+
+Ademas el visor pide `frameRate: 24` en vez de 30: para encuadrar se ve igual y baja el trabajo del ISP.
+
+**Compromiso:** en iOS la foto sale del fotograma del visor, asi que el tope de megapixeles marca tambien la calidad de la foto. `CAPTURE_MAX_PIXELS` esta en `config.js` con la escala documentada para poder moverlo.
+
+### Indicador de foco
+
+Ni Safari ni iOS exponen el estado del autofoco, asi que el foco se **mide sobre la imagen**: se recorta el centro del fotograma **a resolucion nativa** (256x192, sin reescalar, porque reducir promedia justo el detalle fino que hay que medir) y se suma la energia de gradiente `|dL/dx| + |dL/dy|` de la luminancia. Una imagen desenfocada es una imagen filtrada por paso bajo: sus bordes son suaves y esa suma cae.
+
+El umbral no es absoluto sino **relativo a un maximo movil que decae** (`peak * 0.97`), porque cada escena tiene su propio nivel de detalle y lo que interesa es si esta en su mejor punto. Hacen falta dos lecturas seguidas por encima del 82% del pico para pasar a verde, de forma que el recuadro no parpadee. Se muestrea cada 350 ms y se detiene con la app oculta, la camara en pausa o la vista previa abierta.
+
+### Vista previa antes de subir
+
+Nada llega a la cola sin aprobacion: tras disparar se muestra la foto con **Usar foto** / **Repetir**. Vale igual para la camara nativa. El nombre del archivo lleva la hora del **disparo**, no la de la aceptacion. Se desactiva con `CONFIRM_BEFORE_UPLOAD = false`.
+
+### Disparador abajo
+
+El obturador pasa a una barra inferior fija, dentro del alcance del pulgar, con `Conectar Google` encima mientras haga falta. La barra no captura toques fuera de sus botones (`pointer-events`).
+
+### Historial compacto con borrado
+
+- El log deja de ser una lista de nombres y pasa a una **tira horizontal de miniaturas** de 58 px.
+- Cada miniatura es un JPEG de 320 px generado al capturar (unos 30 KB). Guardar el blob completo de cada foto reciente en memoria reventaria el telefono en pocas fotos; el original solo se lee de IndexedDB al abrir el visor y mientras siga en cola.
+- Al tocar una miniatura se abre la foto en grande con su estado y tamano, **Abrir en Drive** (si ya subio) y **Eliminar**.
+- Eliminar pide un segundo toque de confirmacion. Si la foto sigue en cola se borra de IndexedDB; si ya esta en Drive se manda a la **papelera** (`PATCH trashed: true`), no se destruye: un toque de mas no puede costar una foto irrecuperable. No se permite borrar a mitad de una subida.
+- Para poder borrar en Drive, la subida ahora devuelve y guarda el `fileId` y el `webViewLink` de cada foto.
+
+Cache del shell a `camtodrive-shell-v8`.
+
 ## Encargo 7 - interfaz Liquid Glass (solo movil)
 
 Reemplaza la piel Windows 98. El aspecto no es decorativo: cada capa del material traduce una ley optica, y `styles.css` lleva la deduccion escrita en comentarios.

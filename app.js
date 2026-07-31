@@ -35,9 +35,28 @@
     authHintMessage: "",
     cameraError: "",
     captureInProgress: false,
-    lastThumbUrl: null,
+    deleteArmed: false,
     recentPhotos: [],
     uploadProgressById: new Map(),
+    focus: {
+      timer: null,
+      canvas: null,
+      peak: 0,
+      stable: 0,
+      locked: false,
+    },
+    preview: {
+      open: false,
+      blob: null,
+      url: null,
+      label: "",
+      takenAt: null,
+    },
+    viewerPhoto: {
+      open: false,
+      photoId: null,
+      url: null,
+    },
     camera: {
       stream: null,
       track: null,
@@ -47,6 +66,8 @@
       height: 0,
       starting: false,
       supported: true,
+      suspended: false,
+      idleTimer: null,
     },
   };
 
@@ -110,13 +131,28 @@
     elements.retryCameraButton = document.getElementById("retryCameraButton");
     elements.nativeCameraButton = document.getElementById("nativeCameraButton");
     elements.captureQuality = document.getElementById("captureQuality");
+    elements.cameraPaused = document.getElementById("cameraPaused");
+    elements.focusFrame = document.getElementById("focusFrame");
     elements.statusText = document.getElementById("statusText");
     elements.pendingCount = document.getElementById("pendingCount");
     elements.uploadingCount = document.getElementById("uploadingCount");
     elements.networkStatus = document.getElementById("networkStatus");
-    elements.lastThumb = document.getElementById("lastThumb");
-    elements.emptyThumb = document.getElementById("emptyThumb");
     elements.authHint = document.getElementById("authHint");
+
+    elements.preview = document.getElementById("preview");
+    elements.previewImage = document.getElementById("previewImage");
+    elements.previewMeta = document.getElementById("previewMeta");
+    elements.previewAcceptButton = document.getElementById("previewAcceptButton");
+    elements.previewRetakeButton = document.getElementById("previewRetakeButton");
+
+    elements.photoViewer = document.getElementById("photoViewer");
+    elements.photoViewerImage = document.getElementById("photoViewerImage");
+    elements.photoViewerName = document.getElementById("photoViewerName");
+    elements.photoViewerMeta = document.getElementById("photoViewerMeta");
+    elements.photoViewerWarning = document.getElementById("photoViewerWarning");
+    elements.photoViewerDelete = document.getElementById("photoViewerDelete");
+    elements.photoViewerOpen = document.getElementById("photoViewerOpen");
+    elements.photoViewerClose = document.getElementById("photoViewerClose");
     elements.recentList = document.getElementById("recentList");
     elements.globalProgress = document.getElementById("globalProgress");
     elements.globalProgressBar = document.getElementById("globalProgressBar");
@@ -131,6 +167,14 @@
     elements.cameraInput.addEventListener("change", handleNativeCapture);
     elements.viewer.addEventListener("loadedmetadata", updateCaptureQualityLabel);
     elements.viewer.addEventListener("resize", updateCaptureQualityLabel);
+
+    // Tocar el visor cuenta como actividad y reanuda la camara si se apago sola.
+    elements.viewerFrame.addEventListener("click", resumeCameraFromPause);
+
+    elements.previewAcceptButton.addEventListener("click", acceptPreview);
+    elements.previewRetakeButton.addEventListener("click", discardPreview);
+    elements.photoViewerClose.addEventListener("click", closePhotoViewer);
+    elements.photoViewerDelete.addEventListener("click", handleDeleteRequest);
 
     window.addEventListener("online", () => {
       updateNetworkStatus();
@@ -160,7 +204,9 @@
 
     window.addEventListener("pagehide", () => {
       stopCamera();
-      revokeLastThumbnail();
+      closePreview();
+      closePhotoViewer();
+      state.recentPhotos.forEach(releaseRecentPhoto);
     });
   }
 
@@ -294,6 +340,8 @@
     }
 
     state.camera.starting = true;
+    state.camera.suspended = false;
+    elements.cameraPaused.hidden = true;
     if (isManualRetry) {
       state.cameraError = "";
     }
@@ -307,6 +355,8 @@
           facingMode: { ideal: "environment" },
           width: { ideal: config.CAPTURE_IDEAL_WIDTH || 4096 },
           height: { ideal: config.CAPTURE_IDEAL_HEIGHT || 3072 },
+          // Menos fotogramas por segundo = menos trabajo del ISP = menos bateria.
+          frameRate: { ideal: getIdealFrameRate(), max: 30 },
         },
         audio: false,
       });
@@ -335,7 +385,7 @@
     state.camera.stream = stream;
     state.camera.track = track;
 
-    await maximizeTrackResolution(track);
+    await tuneTrackResolution(track);
 
     elements.viewer.srcObject = stream;
     elements.viewer.hidden = false;
@@ -349,10 +399,14 @@
     setupImageCapture(track);
     updateCaptureQualityLabel();
     setCameraMessage("Camara abierta. Dispara las veces que quieras.");
+    noteCameraActivity();
+    startFocusWatch();
   }
 
-  // Sube el track a la maxima resolucion que declare el dispositivo.
-  async function maximizeTrackResolution(track) {
+  // Sube el track a la mayor resolucion que declare el dispositivo, pero sin pasar del tope
+  // de CAPTURE_MAX_PIXELS: un visor de 12 MP a 30 fps es la mayor fuente de consumo de la app
+  // y el aumento de calidad por encima de ~8 MP no se nota en un fotograma de video.
+  async function tuneTrackResolution(track) {
     if (typeof track.getCapabilities !== "function") {
       return;
     }
@@ -371,19 +425,45 @@
       return;
     }
 
+    const target = capResolution(maxWidth, maxHeight, getMaxCapturePixels());
     const settings = typeof track.getSettings === "function" ? track.getSettings() : {};
-    if (settings.width >= maxWidth && settings.height >= maxHeight) {
+    if (settings.width === target.width && settings.height === target.height) {
       return;
     }
 
     try {
       await track.applyConstraints({
-        width: { ideal: maxWidth },
-        height: { ideal: maxHeight },
+        width: { ideal: target.width },
+        height: { ideal: target.height },
+        frameRate: { ideal: getIdealFrameRate(), max: 30 },
       });
     } catch (error) {
-      console.debug("La camara no acepto la resolucion maxima.", error);
+      console.debug("La camara no acepto la resolucion pedida.", error);
     }
+  }
+
+  // Reduce la resolucion manteniendo la relacion de aspecto hasta caber en el tope.
+  function capResolution(width, height, maxPixels) {
+    const pixels = width * height;
+    if (!maxPixels || pixels <= maxPixels) {
+      return { width, height };
+    }
+
+    const scale = Math.sqrt(maxPixels / pixels);
+    return {
+      width: Math.round(width * scale),
+      height: Math.round(height * scale),
+    };
+  }
+
+  function getMaxCapturePixels() {
+    const value = Number(getAppConfig().CAPTURE_MAX_PIXELS);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
+  function getIdealFrameRate() {
+    const value = Number(getAppConfig().CAPTURE_FRAME_RATE);
+    return Number.isFinite(value) && value >= 10 && value <= 60 ? value : 24;
   }
 
   // ImageCapture entrega una foto real del sensor (sin pasar por canvas).
@@ -404,6 +484,210 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Ahorro de bateria: la camara se apaga sola cuando nadie la usa.
+  // Un stream abierto sigue consumiendo aunque no se dispare, y es lo que mas
+  // gasta de toda la app.
+  // ---------------------------------------------------------------------------
+
+  function getCameraIdleMs() {
+    const seconds = Number(getAppConfig().CAMERA_IDLE_TIMEOUT_SECONDS);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      return 0;
+    }
+    return Math.max(15, seconds) * 1000;
+  }
+
+  function noteCameraActivity() {
+    scheduleCameraIdleSuspend();
+  }
+
+  function scheduleCameraIdleSuspend() {
+    clearCameraIdleTimer();
+    const idleMs = getCameraIdleMs();
+    if (!idleMs || !state.camera.stream) {
+      return;
+    }
+    state.camera.idleTimer = window.setTimeout(suspendCameraForIdle, idleMs);
+  }
+
+  function clearCameraIdleTimer() {
+    if (state.camera.idleTimer) {
+      window.clearTimeout(state.camera.idleTimer);
+      state.camera.idleTimer = null;
+    }
+  }
+
+  function suspendCameraForIdle() {
+    // Nunca cortar en mitad de un disparo o con la vista previa abierta.
+    if (!state.camera.stream || state.captureInProgress || state.preview.open) {
+      scheduleCameraIdleSuspend();
+      return;
+    }
+
+    stopCamera();
+    state.camera.suspended = true;
+    elements.cameraPaused.hidden = false;
+    setStatus("Camara en pausa", "warning");
+    setHint("La camara se apago para ahorrar bateria. Toca el visor para reanudarla.");
+    updateControls();
+  }
+
+  function resumeCameraFromPause() {
+    if (!state.camera.suspended) {
+      noteCameraActivity();
+      return;
+    }
+    startCamera(true);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Indicador de foco
+  //
+  // Ni Safari ni iOS exponen el estado del autofoco (no hay focusMode fiable), asi que
+  // el foco se MIDE sobre la imagen: se recorta el centro del fotograma a resolucion
+  // nativa y se suma la energia de gradiente (|dL/dx| + |dL/dy| de la luminancia). Una
+  // imagen desenfocada es una imagen filtrada por paso bajo: sus bordes son suaves y esa
+  // suma cae. El recorte va sin reescalar porque reducir la imagen promedia justamente el
+  // detalle fino que se quiere medir.
+  //
+  // El umbral es relativo a un maximo movil que decae, no absoluto: cada escena tiene su
+  // propio nivel de detalle y lo que importa es si esta en su mejor punto de foco.
+  // ---------------------------------------------------------------------------
+
+  const FOCUS_SAMPLE_INTERVAL_MS = 350;
+  const FOCUS_CROP_WIDTH = 256;
+  const FOCUS_CROP_HEIGHT = 192;
+  const FOCUS_LOCK_RATIO = 0.82;
+  const FOCUS_PEAK_DECAY = 0.97;
+  const FOCUS_MIN_ENERGY = 1.5;
+  const FOCUS_STABLE_SAMPLES = 2;
+
+  function startFocusWatch() {
+    stopFocusWatch();
+    if (!elements.focusFrame) {
+      return;
+    }
+
+    state.focus.peak = 0;
+    state.focus.stable = 0;
+    state.focus.locked = false;
+    elements.focusFrame.hidden = false;
+    setFocusState("searching");
+    state.focus.timer = window.setInterval(sampleFocus, FOCUS_SAMPLE_INTERVAL_MS);
+  }
+
+  function stopFocusWatch() {
+    if (state.focus.timer) {
+      window.clearInterval(state.focus.timer);
+      state.focus.timer = null;
+    }
+    if (elements.focusFrame) {
+      elements.focusFrame.hidden = true;
+    }
+    state.focus.locked = false;
+  }
+
+  function setFocusState(mode) {
+    if (!elements.focusFrame) {
+      return;
+    }
+    elements.focusFrame.classList.toggle("locked", mode === "locked");
+    elements.focusFrame.classList.toggle("searching", mode !== "locked");
+  }
+
+  function sampleFocus() {
+    if (document.hidden || !state.camera.stream || state.preview.open) {
+      return;
+    }
+
+    const energy = measureCenterSharpness(elements.viewer);
+    if (energy === null) {
+      return;
+    }
+
+    // El pico decae para que la medida se readapte al cambiar de escena.
+    state.focus.peak = Math.max(state.focus.peak * FOCUS_PEAK_DECAY, energy);
+
+    const ratio = state.focus.peak > 0 ? energy / state.focus.peak : 0;
+    const sharp = energy >= FOCUS_MIN_ENERGY && ratio >= FOCUS_LOCK_RATIO;
+
+    state.focus.stable = sharp ? state.focus.stable + 1 : 0;
+    const locked = state.focus.stable >= FOCUS_STABLE_SAMPLES;
+
+    if (locked !== state.focus.locked) {
+      state.focus.locked = locked;
+      setFocusState(locked ? "locked" : "searching");
+    }
+  }
+
+  function measureCenterSharpness(video) {
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) {
+      return null;
+    }
+
+    const cropWidth = Math.min(FOCUS_CROP_WIDTH, width);
+    const cropHeight = Math.min(FOCUS_CROP_HEIGHT, height);
+    const canvas = getFocusCanvas(cropWidth, cropHeight);
+    const context = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
+    if (!context) {
+      return null;
+    }
+
+    try {
+      context.drawImage(
+        video,
+        Math.round((width - cropWidth) / 2),
+        Math.round((height - cropHeight) / 2),
+        cropWidth,
+        cropHeight,
+        0,
+        0,
+        cropWidth,
+        cropHeight
+      );
+    } catch (_error) {
+      return null;
+    }
+
+    let data = null;
+    try {
+      data = context.getImageData(0, 0, cropWidth, cropHeight).data;
+    } catch (_error) {
+      return null;
+    }
+
+    let sum = 0;
+    for (let y = 0; y < cropHeight - 1; y += 1) {
+      for (let x = 0; x < cropWidth - 1; x += 1) {
+        const index = (y * cropWidth + x) * 4;
+        const luma = luminance(data, index);
+        const right = luminance(data, index + 4);
+        const below = luminance(data, index + cropWidth * 4);
+        sum += Math.abs(right - luma) + Math.abs(below - luma);
+      }
+    }
+
+    return sum / ((cropWidth - 1) * (cropHeight - 1));
+  }
+
+  function luminance(data, index) {
+    return 0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2];
+  }
+
+  function getFocusCanvas(width, height) {
+    if (!state.focus.canvas) {
+      state.focus.canvas = document.createElement("canvas");
+    }
+    if (state.focus.canvas.width !== width || state.focus.canvas.height !== height) {
+      state.focus.canvas.width = width;
+      state.focus.canvas.height = height;
+    }
+    return state.focus.canvas;
+  }
+
   function handleTrackEnded(event) {
     // Ignora el 'ended' de un track viejo cuando ya se reabrio la camara.
     if (event && event.target && event.target !== state.camera.track) {
@@ -417,6 +701,8 @@
   }
 
   function stopCamera() {
+    clearCameraIdleTimer();
+    stopFocusWatch();
     const stream = state.camera.stream;
     if (state.camera.track) {
       state.camera.track.removeEventListener("ended", handleTrackEnded);
@@ -503,7 +789,13 @@
   }
 
   async function capturePhoto() {
-    if (state.captureInProgress) {
+    if (state.captureInProgress || state.preview.open) {
+      return;
+    }
+
+    if (state.camera.suspended) {
+      // Primer toque tras la pausa: reabrir la camara en vez de disparar a ciegas.
+      resumeCameraFromPause();
       return;
     }
 
@@ -516,11 +808,17 @@
     state.captureInProgress = true;
     updateControls();
 
+    const takenAt = new Date();
     try {
       const captured = await grabPhotoBlob();
-      const fileName = makePhotoFileName(new Date(), captured.blob);
-      await storeCapturedPhoto(captured.blob, fileName, captured.label);
+      noteCameraActivity();
       updateCaptureQualityLabel();
+
+      if (shouldConfirmBeforeUpload()) {
+        openPreview(captured.blob, captured.label, takenAt);
+      } else {
+        await acceptCapturedPhoto(captured.blob, captured.label, takenAt);
+      }
     } catch (error) {
       console.error(error);
       setStatus("No se pudo capturar", "error");
@@ -529,6 +827,84 @@
       state.captureInProgress = false;
       updateControls();
     }
+  }
+
+  async function acceptCapturedPhoto(blob, label, takenAt) {
+    const fileName = makePhotoFileName(takenAt || new Date(), blob);
+    await storeCapturedPhoto(blob, fileName, label);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Vista previa: nada llega a la cola sin que el usuario la acepte.
+  // ---------------------------------------------------------------------------
+
+  function shouldConfirmBeforeUpload() {
+    return getAppConfig().CONFIRM_BEFORE_UPLOAD !== false;
+  }
+
+  function openPreview(blob, label, takenAt) {
+    closePreview();
+
+    state.preview.open = true;
+    state.preview.blob = blob;
+    state.preview.label = label || "";
+    state.preview.takenAt = takenAt || new Date();
+    state.preview.url = URL.createObjectURL(blob);
+
+    elements.previewImage.src = state.preview.url;
+    elements.previewMeta.textContent = `${label || "Foto"} · ${formatBytes(blob.size)}`;
+    elements.preview.hidden = false;
+    setStatus("Revisa la foto", "warning");
+    setHint("Usar foto la manda a la cola; Repetir la descarta.");
+    updateControls();
+  }
+
+  function closePreview() {
+    if (state.preview.url) {
+      URL.revokeObjectURL(state.preview.url);
+    }
+    state.preview.open = false;
+    state.preview.blob = null;
+    state.preview.url = null;
+    state.preview.label = "";
+
+    if (elements.preview) {
+      elements.preview.hidden = true;
+      elements.previewImage.removeAttribute("src");
+    }
+  }
+
+  async function acceptPreview() {
+    if (!state.preview.open || !state.preview.blob) {
+      return;
+    }
+
+    const blob = state.preview.blob;
+    const label = state.preview.label;
+    const takenAt = state.preview.takenAt;
+
+    // Se suelta la referencia del preview antes de encolar para no duplicar el blob.
+    state.preview.blob = null;
+    closePreview();
+
+    try {
+      await acceptCapturedPhoto(blob, label, takenAt);
+    } catch (error) {
+      console.error(error);
+      setStatus("No se pudo encolar", "error");
+      setHint("Reintenta el disparo. La cola existente no se modifico.");
+    } finally {
+      noteCameraActivity();
+      updateControls();
+    }
+  }
+
+  function discardPreview() {
+    closePreview();
+    setQueuedStatus();
+    setHint("Foto descartada. Dispara otra vez.");
+    noteCameraActivity();
+    updateControls();
   }
 
   async function grabPhotoBlob() {
@@ -657,8 +1033,12 @@
     updateControls();
 
     try {
-      const fileName = makePhotoFileName(new Date(), file);
-      await storeCapturedPhoto(file, fileName, "Camara nativa");
+      const takenAt = new Date();
+      if (shouldConfirmBeforeUpload()) {
+        openPreview(file, "Camara nativa", takenAt);
+      } else {
+        await acceptCapturedPhoto(file, "Camara nativa", takenAt);
+      }
     } catch (error) {
       console.error(error);
       setStatus("No se pudo encolar", "error");
@@ -670,13 +1050,17 @@
   }
 
   async function storeCapturedPhoto(file, fileName, sourceLabel) {
-    showThumbnail(file);
+    // La miniatura se genera una sola vez y pesa unos pocos KB: guardar el blob completo
+    // de cada foto reciente en memoria reventaria un telefono en pocas fotos.
+    const thumbUrl = await createThumbnailUrl(file);
     const pendingId = await enqueuePhoto(file, fileName);
     addRecentPhoto({
       id: pendingId,
       fileName,
       status: "queued",
       label: sourceLabel,
+      thumbUrl,
+      size: file.size,
     });
     setQueuedStatus();
     setHint(isAuthenticated()
@@ -689,28 +1073,68 @@
     }
   }
 
-  function showThumbnail(blob) {
-    revokeLastThumbnail();
+  const THUMBNAIL_MAX_SIDE = 320;
 
-    state.lastThumbUrl = URL.createObjectURL(blob);
-    elements.lastThumb.src = state.lastThumbUrl;
-    elements.lastThumb.hidden = false;
-    elements.emptyThumb.hidden = true;
+  async function createThumbnailUrl(blob) {
+    try {
+      const bitmap = await decodeImage(blob);
+      if (!bitmap) {
+        return null;
+      }
+
+      const width = bitmap.width || bitmap.naturalWidth;
+      const height = bitmap.height || bitmap.naturalHeight;
+      const scale = Math.min(1, THUMBNAIL_MAX_SIDE / Math.max(width, height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+
+      const context = canvas.getContext("2d", { alpha: false });
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      if (typeof bitmap.close === "function") {
+        bitmap.close();
+      }
+
+      const thumbBlob = await canvasToBlob(canvas, "image/jpeg", 0.7);
+      return thumbBlob ? URL.createObjectURL(thumbBlob) : null;
+    } catch (error) {
+      console.debug("No se pudo generar la miniatura.", error);
+      return null;
+    }
   }
 
-  function revokeLastThumbnail() {
-    if (!state.lastThumbUrl) {
-      return;
+  function decodeImage(blob) {
+    if (typeof createImageBitmap === "function") {
+      return createImageBitmap(blob).catch(() => decodeImageWithTag(blob));
     }
+    return decodeImageWithTag(blob);
+  }
 
-    URL.revokeObjectURL(state.lastThumbUrl);
-    state.lastThumbUrl = null;
+  // Respaldo para formatos que createImageBitmap no decodifica (HEIC en Safari).
+  function decodeImageWithTag(blob) {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const image = new Image();
+      image.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve(image);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+      image.src = url;
+    });
   }
 
   function addRecentPhoto(photo) {
     state.recentPhotos = state.recentPhotos.filter((item) => item.id !== photo.id);
     state.recentPhotos.unshift({
       progress: null,
+      thumbUrl: null,
+      driveFileId: null,
+      webViewLink: null,
+      size: 0,
       ...photo,
     });
     trimRecentPhotos();
@@ -738,24 +1162,32 @@
       Object.assign(photo, patch);
       trimRecentPhotos();
       renderRecentPhotos();
+
+      // Si esa foto esta abierta en el visor, sus botones deben seguir el cambio de estado.
+      if (state.viewerPhoto.open && state.viewerPhoto.photoId === id) {
+        updatePhotoViewerActions(photo);
+        elements.photoViewerMeta.textContent = [
+          getRecentStatusText(photo),
+          photo.size ? formatBytes(photo.size) : "",
+        ].filter(Boolean).join(" · ");
+      }
     }
   }
 
+  const RECENT_LIMIT = 12;
+
   function trimRecentPhotos() {
-    const visibleLimit = 6;
-    const hardLimit = 12;
-    const visible = [];
-    const overflow = [];
+    const kept = state.recentPhotos.slice(0, RECENT_LIMIT);
+    // Las miniaturas que salen de la tira se liberan: si no, cada foto deja memoria retenida.
+    state.recentPhotos.slice(RECENT_LIMIT).forEach(releaseRecentPhoto);
+    state.recentPhotos = kept;
+  }
 
-    state.recentPhotos.forEach((photo) => {
-      if (visible.length < visibleLimit || photo.status === "uploading") {
-        visible.push(photo);
-      } else {
-        overflow.push(photo);
-      }
-    });
-
-    state.recentPhotos = visible.concat(overflow).slice(0, hardLimit);
+  function releaseRecentPhoto(photo) {
+    if (photo && photo.thumbUrl) {
+      URL.revokeObjectURL(photo.thumbUrl);
+      photo.thumbUrl = null;
+    }
   }
 
   function renderRecentPhotos() {
@@ -767,22 +1199,32 @@
     if (state.recentPhotos.length === 0) {
       const item = document.createElement("li");
       item.className = "recent-empty";
-      item.textContent = "Sin disparos recientes";
+      item.textContent = "Sin fotos todavia";
       elements.recentList.appendChild(item);
       return;
     }
 
     state.recentPhotos.forEach((photo) => {
       const item = document.createElement("li");
-      item.className = `recent-item ${photo.status}`;
+      item.className = `shot ${photo.status}`;
 
-      const info = document.createElement("div");
-      info.className = "recent-info";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "shot-button";
+      button.setAttribute("aria-label", `Ver ${photo.fileName}`);
+      button.addEventListener("click", () => openPhotoViewer(photo.id));
 
-      const name = document.createElement("span");
-      name.className = "recent-name";
-      name.textContent = photo.fileName;
-      info.appendChild(name);
+      if (photo.thumbUrl) {
+        const image = document.createElement("img");
+        image.src = photo.thumbUrl;
+        image.alt = "";
+        button.appendChild(image);
+      } else {
+        const placeholder = document.createElement("span");
+        placeholder.className = "shot-placeholder";
+        placeholder.textContent = "IMG";
+        button.appendChild(placeholder);
+      }
 
       if (photo.status === "uploading") {
         const progress = normalizeProgress(photo.progress);
@@ -797,16 +1239,32 @@
         const progressBar = document.createElement("span");
         progressBar.style.width = `${progress}%`;
         progressTrack.appendChild(progressBar);
-        info.appendChild(progressTrack);
+        button.appendChild(progressTrack);
       }
 
       const badge = document.createElement("span");
-      badge.className = "recent-badge";
-      badge.textContent = getRecentStatusText(photo);
+      badge.className = "shot-badge";
+      badge.textContent = getRecentStatusIcon(photo);
+      badge.title = getRecentStatusText(photo);
+      button.appendChild(badge);
 
-      item.append(info, badge);
+      item.appendChild(button);
       elements.recentList.appendChild(item);
     });
+  }
+
+  function getRecentStatusIcon(photo) {
+    const status = photo.status;
+    if (status === "uploading") {
+      return `${normalizeProgress(photo.progress)}%`;
+    }
+    if (status === "done") {
+      return "OK";
+    }
+    if (status === "error") {
+      return "!";
+    }
+    return "···";
   }
 
   function getRecentStatusText(photo) {
@@ -815,12 +1273,176 @@
       return `Subiendo ${normalizeProgress(photo.progress)}%`;
     }
     if (status === "done") {
-      return "OK";
+      return "Subida a Drive";
     }
     if (status === "error") {
-      return "Pendiente";
+      return "Pendiente de reintento";
     }
     return "En cola";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Visor de una foto del historial: ver en grande y borrar.
+  // ---------------------------------------------------------------------------
+
+  async function openPhotoViewer(photoId) {
+    const photo = state.recentPhotos.find((item) => item.id === photoId);
+    if (!photo) {
+      return;
+    }
+
+    closePhotoViewer();
+    state.viewerPhoto.open = true;
+    state.viewerPhoto.photoId = photoId;
+
+    elements.photoViewer.hidden = false;
+    elements.photoViewerName.textContent = photo.fileName;
+    elements.photoViewerMeta.textContent = [
+      getRecentStatusText(photo),
+      photo.size ? formatBytes(photo.size) : "",
+    ].filter(Boolean).join(" · ");
+    elements.photoViewerImage.src = photo.thumbUrl || "";
+    resetDeleteConfirmation();
+    updatePhotoViewerActions(photo);
+    updateControls();
+
+    // Si la foto sigue en la cola, su original esta en IndexedDB: se muestra en grande.
+    if (photo.status !== "done") {
+      try {
+        const pending = await getPendingPhoto(photoId);
+        if (pending && pending.blob && state.viewerPhoto.photoId === photoId) {
+          state.viewerPhoto.url = URL.createObjectURL(pending.blob);
+          elements.photoViewerImage.src = state.viewerPhoto.url;
+        }
+      } catch (error) {
+        console.debug("No se pudo leer la foto original.", error);
+      }
+    }
+  }
+
+  function updatePhotoViewerActions(photo) {
+    const isUploaded = photo.status === "done";
+    const isUploading = photo.status === "uploading";
+
+    elements.photoViewerOpen.hidden = !photo.webViewLink;
+    if (photo.webViewLink) {
+      elements.photoViewerOpen.href = photo.webViewLink;
+    }
+
+    if (isUploading) {
+      // Borrarla a mitad de la subida dejaria el archivo a medias en Drive.
+      elements.photoViewerDelete.textContent = "Subiendo...";
+      elements.photoViewerDelete.disabled = true;
+      return;
+    }
+
+    elements.photoViewerDelete.textContent = isUploaded
+      ? "Eliminar de Drive"
+      : "Eliminar de la cola";
+    // Sin id de Drive no hay nada que borrar alla: se evita prometer lo que no se puede.
+    elements.photoViewerDelete.disabled = isUploaded && !photo.driveFileId;
+  }
+
+  function closePhotoViewer() {
+    if (state.viewerPhoto.url) {
+      URL.revokeObjectURL(state.viewerPhoto.url);
+      state.viewerPhoto.url = null;
+    }
+    state.viewerPhoto.open = false;
+    state.viewerPhoto.photoId = null;
+
+    if (elements.photoViewer) {
+      elements.photoViewer.hidden = true;
+      elements.photoViewerImage.removeAttribute("src");
+      resetDeleteConfirmation();
+    }
+  }
+
+  function resetDeleteConfirmation() {
+    state.deleteArmed = false;
+    if (elements.photoViewerDelete) {
+      elements.photoViewerDelete.classList.remove("armed");
+    }
+    if (elements.photoViewerWarning) {
+      elements.photoViewerWarning.hidden = true;
+    }
+  }
+
+  async function handleDeleteRequest() {
+    const photo = state.recentPhotos.find((item) => item.id === state.viewerPhoto.photoId);
+    if (!photo) {
+      return;
+    }
+
+    // Borrar es irreversible desde la app: se pide un segundo toque.
+    if (!state.deleteArmed) {
+      state.deleteArmed = true;
+      elements.photoViewerDelete.classList.add("armed");
+      elements.photoViewerDelete.textContent = "Confirmar";
+      elements.photoViewerWarning.hidden = false;
+      elements.photoViewerWarning.textContent = photo.status === "done"
+        ? "La foto se mandara a la papelera de Drive (recuperable 30 dias)."
+        : "La foto se borrara del telefono y no se subira.";
+      return;
+    }
+
+    elements.photoViewerDelete.disabled = true;
+    try {
+      if (photo.status === "done") {
+        await trashDriveFile(photo.driveFileId);
+      } else {
+        await deletePendingPhoto(photo.id);
+        await refreshPendingCount();
+      }
+
+      releaseRecentPhoto(photo);
+      state.recentPhotos = state.recentPhotos.filter((item) => item.id !== photo.id);
+      renderRecentPhotos();
+      closePhotoViewer();
+      setStatus(photo.status === "done" ? "Foto eliminada" : "Foto descartada", "ok");
+      setHint(photo.status === "done"
+        ? "La foto quedo en la papelera de Google Drive."
+        : "La foto salio de la cola y no se subira.");
+    } catch (error) {
+      console.error(error);
+      elements.photoViewerWarning.hidden = false;
+      elements.photoViewerWarning.textContent = error instanceof AuthExpiredError
+        ? "Reconecta Google para poder borrar en Drive."
+        : "No se pudo eliminar. Reintenta.";
+      resetDeleteConfirmation();
+      updatePhotoViewerActions(photo);
+    } finally {
+      elements.photoViewerDelete.disabled = false;
+      updateControls();
+    }
+  }
+
+  // Se manda a la papelera en vez de borrar definitivamente: un toque de mas no puede
+  // costar una foto irrecuperable.
+  async function trashDriveFile(fileId) {
+    if (!fileId) {
+      throw new Error("La foto no tiene identificador en Drive.");
+    }
+
+    const response = await authorizedFetch(`${DRIVE_FILES_URL}/${encodeURIComponent(fileId)}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+      body: JSON.stringify({ trashed: true }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await getResponseMessage(response));
+    }
+  }
+
+  function formatBytes(bytes) {
+    const size = Number(bytes) || 0;
+    if (size >= 1024 * 1024) {
+      return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    }
+    return `${Math.max(1, Math.round(size / 1024))} KB`;
   }
 
   function normalizeProgress(value) {
@@ -1122,7 +1744,7 @@
     const params = new URLSearchParams({
       q: query,
       spaces: "drive",
-      fields: "files(id,name)",
+      fields: "files(id,name,webViewLink)",
       pageSize: "1",
     });
 
@@ -1234,12 +1856,15 @@
 
           try {
             await ensureUploadId(photo);
-            await uploadWithRetries(photo);
+            const uploaded = await uploadWithRetries(photo);
             await deletePendingPhoto(photo.id);
             uploadedCount += 1;
             updateRecentPhoto(photo.id, {
               status: "done",
               progress: 100,
+              // Se guarda el id de Drive para poder borrar la foto despues de subida.
+              driveFileId: uploaded && uploaded.id ? uploaded.id : null,
+              webViewLink: uploaded && uploaded.webViewLink ? uploaded.webViewLink : null,
             });
             await refreshPendingCount();
           } catch (error) {
@@ -1334,14 +1959,13 @@
         if (attempt > 1) {
           const alreadyUploaded = await findUploadedPhoto(photo.uploadId);
           if (alreadyUploaded) {
-            return;
+            return alreadyUploaded;
           }
         }
 
-        await uploadPhotoToDrive(photo.blob, photo.fileName, photo.uploadId, (loaded, total) => {
+        return await uploadPhotoToDrive(photo.blob, photo.fileName, photo.uploadId, (loaded, total) => {
           setPhotoUploadProgress(photo.id, loaded, total);
         });
-        return;
       } catch (error) {
         if (error instanceof AuthExpiredError) {
           throw error;
@@ -1569,7 +2193,9 @@
 
     elements.connectButton.disabled = !configured || !state.gisReady;
     elements.connectButton.hidden = authenticated;
-    elements.captureButton.disabled = state.captureInProgress || state.camera.starting;
+    elements.captureButton.disabled =
+      state.captureInProgress || state.camera.starting || state.preview.open;
+    elements.captureButton.classList.toggle("paused", state.camera.suspended);
     elements.pendingCount.textContent = String(state.pendingCount);
     elements.uploadingCount.textContent = String(state.uploadingCount);
     elements.authHint.textContent = state.authHintMessage || getDefaultHint(configured, authenticated);
@@ -1588,13 +2214,16 @@
     if (authenticated && state.pendingCount > 0) {
       return "Los pendientes se subiran automaticamente con conexion.";
     }
+    if (state.camera.suspended) {
+      return "La camara se apago para ahorrar bateria. Toca el visor para reanudarla.";
+    }
     if (authenticated) {
-      return "Dispara las veces que quieras: la camara no se cierra.";
+      return "Espera el recuadro verde y dispara: revisas la foto antes de subirla.";
     }
     if (state.pendingCount > 0) {
       return "Conecta Google para subir pendientes.";
     }
-    return "Conecta Google y dispara sin cerrar la camara.";
+    return "Conecta Google y dispara: el recuadro verde avisa cuando hay foco.";
   }
 
   function updateNetworkStatus() {

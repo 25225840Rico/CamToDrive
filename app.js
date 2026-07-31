@@ -126,7 +126,7 @@
     elements.cameraInput = document.getElementById("cameraInput");
     elements.cameraMessage = document.getElementById("cameraMessage");
     elements.viewer = document.getElementById("viewer");
-    elements.viewerFrame = document.getElementById("viewerFrame");
+    elements.stage = document.getElementById("stage");
     elements.cameraFallback = document.getElementById("cameraFallback");
     elements.retryCameraButton = document.getElementById("retryCameraButton");
     elements.nativeCameraButton = document.getElementById("nativeCameraButton");
@@ -168,8 +168,8 @@
     elements.viewer.addEventListener("loadedmetadata", updateCaptureQualityLabel);
     elements.viewer.addEventListener("resize", updateCaptureQualityLabel);
 
-    // Tocar el visor cuenta como actividad y reanuda la camara si se apago sola.
-    elements.viewerFrame.addEventListener("click", resumeCameraFromPause);
+    // Tocar la imagen cuenta como actividad y reanuda la camara si se apago sola.
+    elements.stage.addEventListener("click", resumeCameraFromPause);
 
     elements.previewAcceptButton.addEventListener("click", acceptPreview);
     elements.previewRetakeButton.addEventListener("click", discardPreview);
@@ -529,7 +529,7 @@
     state.camera.suspended = true;
     elements.cameraPaused.hidden = false;
     setStatus("Camara en pausa", "warning");
-    setHint("La camara se apago para ahorrar bateria. Toca el visor para reanudarla.");
+    setHint("La camara se apago para ahorrar bateria. Toca la pantalla para reanudarla.");
     updateControls();
   }
 
@@ -553,15 +553,25 @@
   //
   // El umbral es relativo a un maximo movil que decae, no absoluto: cada escena tiene su
   // propio nivel de detalle y lo que importa es si esta en su mejor punto de foco.
+  //
+  // El cambio de estado usa histeresis (entra en verde con 0.82, sale con 0.70) y exige dos
+  // lecturas seguidas en ambos sentidos: sin eso el marco parpadea con el pulso de la mano.
   // ---------------------------------------------------------------------------
 
-  const FOCUS_SAMPLE_INTERVAL_MS = 350;
+  const FOCUS_INTERVAL_SEARCHING_MS = 300;
+  // Una vez fijado no hace falta mirar tan seguido: media el ritmo y se ahorra bateria.
+  const FOCUS_INTERVAL_LOCKED_MS = 700;
   const FOCUS_CROP_WIDTH = 256;
   const FOCUS_CROP_HEIGHT = 192;
   const FOCUS_LOCK_RATIO = 0.82;
+  const FOCUS_UNLOCK_RATIO = 0.7;
   const FOCUS_PEAK_DECAY = 0.97;
   const FOCUS_MIN_ENERGY = 1.5;
   const FOCUS_STABLE_SAMPLES = 2;
+  // Se miden uno de cada dos pixeles, pero la diferencia se sigue tomando contra el vecino
+  // inmediato: se muestrea menos, no se mide mas grueso. La media converge igual y el
+  // trabajo por lectura baja a la cuarta parte.
+  const FOCUS_SAMPLE_STEP = 2;
 
   function startFocusWatch() {
     stopFocusWatch();
@@ -574,12 +584,26 @@
     state.focus.locked = false;
     elements.focusFrame.hidden = false;
     setFocusState("searching");
-    state.focus.timer = window.setInterval(sampleFocus, FOCUS_SAMPLE_INTERVAL_MS);
+    queueFocusSample();
+  }
+
+  function queueFocusSample() {
+    const delay = state.focus.locked ? FOCUS_INTERVAL_LOCKED_MS : FOCUS_INTERVAL_SEARCHING_MS;
+    state.focus.timer = window.setTimeout(runFocusSample, delay);
+  }
+
+  function runFocusSample() {
+    state.focus.timer = null;
+    if (!state.camera.stream) {
+      return;
+    }
+    sampleFocus();
+    queueFocusSample();
   }
 
   function stopFocusWatch() {
     if (state.focus.timer) {
-      window.clearInterval(state.focus.timer);
+      window.clearTimeout(state.focus.timer);
       state.focus.timer = null;
     }
     if (elements.focusFrame) {
@@ -597,7 +621,7 @@
   }
 
   function sampleFocus() {
-    if (document.hidden || !state.camera.stream || state.preview.open) {
+    if (document.hidden || state.preview.open) {
       return;
     }
 
@@ -610,15 +634,24 @@
     state.focus.peak = Math.max(state.focus.peak * FOCUS_PEAK_DECAY, energy);
 
     const ratio = state.focus.peak > 0 ? energy / state.focus.peak : 0;
-    const sharp = energy >= FOCUS_MIN_ENERGY && ratio >= FOCUS_LOCK_RATIO;
+    // Histeresis: cuesta mas soltar el foco que fijarlo.
+    const threshold = state.focus.locked ? FOCUS_UNLOCK_RATIO : FOCUS_LOCK_RATIO;
+    const sharp = energy >= FOCUS_MIN_ENERGY && ratio >= threshold;
 
-    state.focus.stable = sharp ? state.focus.stable + 1 : 0;
-    const locked = state.focus.stable >= FOCUS_STABLE_SAMPLES;
-
-    if (locked !== state.focus.locked) {
-      state.focus.locked = locked;
-      setFocusState(locked ? "locked" : "searching");
+    if (sharp === state.focus.locked) {
+      state.focus.stable = 0;
+      return;
     }
+
+    // Solo se cambia de estado tras varias lecturas seguidas que lo confirmen.
+    state.focus.stable += 1;
+    if (state.focus.stable < FOCUS_STABLE_SAMPLES) {
+      return;
+    }
+
+    state.focus.stable = 0;
+    state.focus.locked = sharp;
+    setFocusState(sharp ? "locked" : "searching");
   }
 
   function measureCenterSharpness(video) {
@@ -659,18 +692,21 @@
       return null;
     }
 
+    const rowBytes = cropWidth * 4;
     let sum = 0;
-    for (let y = 0; y < cropHeight - 1; y += 1) {
-      for (let x = 0; x < cropWidth - 1; x += 1) {
+    let samples = 0;
+    for (let y = 0; y < cropHeight - 1; y += FOCUS_SAMPLE_STEP) {
+      for (let x = 0; x < cropWidth - 1; x += FOCUS_SAMPLE_STEP) {
         const index = (y * cropWidth + x) * 4;
         const luma = luminance(data, index);
         const right = luminance(data, index + 4);
-        const below = luminance(data, index + cropWidth * 4);
+        const below = luminance(data, index + rowBytes);
         sum += Math.abs(right - luma) + Math.abs(below - luma);
+        samples += 1;
       }
     }
 
-    return sum / ((cropWidth - 1) * (cropHeight - 1));
+    return samples > 0 ? sum / samples : null;
   }
 
   function luminance(data, index) {
@@ -785,7 +821,9 @@
       ? "foto del sensor"
       : "fotograma recomprimido";
     elements.captureQuality.hidden = false;
-    elements.captureQuality.textContent = `${width}x${height} · ${megapixels.toFixed(1)} MP · ${modeLabel}`;
+    // En el chip solo cabe lo esencial; el detalle queda en el title.
+    elements.captureQuality.textContent = `${megapixels.toFixed(1)} MP`;
+    elements.captureQuality.title = `${width}x${height} · ${megapixels.toFixed(1)} MP · ${modeLabel}`;
   }
 
   async function capturePhoto() {
@@ -856,10 +894,13 @@
     elements.preview.hidden = false;
     setStatus("Revisa la foto", "warning");
     setHint("Usar foto la manda a la cola; Repetir la descarta.");
+    pauseViewerPlayback();
     updateControls();
   }
 
   function closePreview() {
+    const wasOpen = state.preview.open;
+
     if (state.preview.url) {
       URL.revokeObjectURL(state.preview.url);
     }
@@ -871,6 +912,29 @@
     if (elements.preview) {
       elements.preview.hidden = true;
       elements.previewImage.removeAttribute("src");
+    }
+
+    if (wasOpen) {
+      resumeViewerPlayback();
+    }
+  }
+
+  // Con un overlay a pantalla completa encima, el visor sigue decodificando fotogramas que
+  // nadie ve, y ademas el desenfoque del overlay se recalcula con cada uno. Pausarlo corta
+  // las dos cosas; la camara sigue abierta, asi que volver es instantaneo.
+  function pauseViewerPlayback() {
+    if (elements.viewer && !elements.viewer.paused) {
+      elements.viewer.pause();
+    }
+  }
+
+  function resumeViewerPlayback() {
+    if (!elements.viewer || !state.camera.stream || !elements.viewer.paused) {
+      return;
+    }
+    const played = elements.viewer.play();
+    if (played && typeof played.catch === "function") {
+      played.catch((error) => console.debug("El visor no reanudo la reproduccion.", error));
     }
   }
 
@@ -1304,6 +1368,7 @@
     elements.photoViewerImage.src = photo.thumbUrl || "";
     resetDeleteConfirmation();
     updatePhotoViewerActions(photo);
+    pauseViewerPlayback();
     updateControls();
 
     // Si la foto sigue en la cola, su original esta en IndexedDB: se muestra en grande.
@@ -1344,6 +1409,8 @@
   }
 
   function closePhotoViewer() {
+    const wasOpen = state.viewerPhoto.open;
+
     if (state.viewerPhoto.url) {
       URL.revokeObjectURL(state.viewerPhoto.url);
       state.viewerPhoto.url = null;
@@ -1355,6 +1422,10 @@
       elements.photoViewer.hidden = true;
       elements.photoViewerImage.removeAttribute("src");
       resetDeleteConfirmation();
+    }
+
+    if (wasOpen) {
+      resumeViewerPlayback();
     }
   }
 
@@ -2215,7 +2286,7 @@
       return "Los pendientes se subiran automaticamente con conexion.";
     }
     if (state.camera.suspended) {
-      return "La camara se apago para ahorrar bateria. Toca el visor para reanudarla.";
+      return "La camara se apago para ahorrar bateria. Toca la pantalla para reanudarla.";
     }
     if (authenticated) {
       return "Espera el recuadro verde y dispara: revisas la foto antes de subirla.";

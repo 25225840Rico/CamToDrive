@@ -15,10 +15,10 @@ Si en algun momento quieres calidad 100% nativa (archivo original del telefono, 
 
 ## Archivos principales
 
-- `index.html`: estructura de la app, visor de camara continuo, panel de fallback nativo, meta tags PWA/iOS y carga de GIS.
+- `index.html`: estructura de la app. El visor ocupa la pantalla entera (`.stage`) y los controles flotan encima en una capa aparte (`.hud`); ademas, panel de fallback nativo, meta tags PWA/iOS y carga de GIS.
 - `config.js`: `CLIENT_ID`, `FOLDER_ID`, `FOLDER_NAME`, resolucion ideal y calidad de captura.
 - `app.js`: autenticacion OAuth, camara continua, captura con `ImageCapture` o canvas, cola IndexedDB, subida multipart/resumable a Drive, concurrencia limitada y reintentos.
-- `styles.css`: UI mobile-first con estetica Liquid Glass (vidrio translucido sobre malla de gradientes), visor principal y botones grandes. Cada capa del material traduce una ley optica: Fresnel en los cantos, reflejo especular Blinn-Phong arriba-izquierda, absorcion Beer-Lambert en el tinte y dispersion de Cauchy en las franjas de color.
+- `styles.css`: UI mobile-first sin marcos: la imagen es el fondo y los controles son vidrio flotante (Liquid Glass). Cada capa del material traduce una ley optica: Fresnel en los cantos, reflejo especular Blinn-Phong arriba-izquierda, absorcion Beer-Lambert en el tinte y dispersion de Cauchy en las franjas de color. El unico marco dibujado es el de foco, que abarca el encuadre util y se pinta con cantoneras enmascaradas.
 - `manifest.webmanifest`: instalacion PWA.
 - `service-worker.js`: cache del shell estatico para abrir la app offline.
 - `icons/`: iconos SVG y PNG para PWA/iOS.

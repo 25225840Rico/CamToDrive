@@ -1,8 +1,11 @@
 /* =============================================================================
-   CamToDrive — Liquid Glass
+   CamToDrive — Liquid Glass, sin marcos
    -----------------------------------------------------------------------------
-   El aspecto no es decorativo: cada capa traduce una ley optica.
+   La imagen ocupa la pantalla entera y los controles flotan encima. No hay panel
+   ni recuadro que contenga el visor: el unico "marco" que se dibuja es el del
+   foco, porque ese si comunica algo.
 
+   El aspecto del vidrio no es decorativo: cada capa traduce una ley optica.
    Fuente de luz virtual: arriba-izquierda, 45 grados, ~5500 K (blanco calido).
    Toda luz alta va arriba-izquierda y toda sombra abajo-derecha, sin excepcion:
    la coherencia direccional es lo que hace que el ojo lea "vidrio" y no "capa
@@ -66,6 +69,10 @@
   --radius-md: 22px;
   --radius-sm: 16px;
 
+  /* Aire reservado a los controles: define hasta donde llega el marco de foco. */
+  --hud-top: calc(56px + env(safe-area-inset-top));
+  --hud-bottom: calc(200px + env(safe-area-inset-bottom));
+
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
     system-ui, sans-serif;
 }
@@ -82,11 +89,10 @@ html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
 }
 
 body {
-  min-height: 100vh;
-  min-height: 100dvh;
   background: var(--void);
   color: var(--ink);
   font-family: var(--font);
@@ -95,17 +101,37 @@ body {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 /* -----------------------------------------------------------------------------
-   Fondo: malla de gradientes.
-   Sin algo vivo detras, el vidrio no tiene nada que refractar y se ve como
-   plastico gris. Los focos ademas dan al material de donde sacar su color.
+   Escenario: el visor a pantalla completa
    -------------------------------------------------------------------------- */
 
-.ambient {
+.stage {
   position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: var(--void);
+}
+
+.stage video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Malla de gradientes: es lo que se ve mientras la camara no esta encendida, y
+   ademas le da al vidrio algo de color que recoger.
+   Sin filter: blur(). Un blur de pantalla completa obliga al compositor a rehacer
+   una capa enorme en cada fotograma; era una de las fugas de bateria. */
+.ambient {
+  position: absolute;
   inset: -20%;
   z-index: -1;
   background:
@@ -114,9 +140,161 @@ body {
     radial-gradient(46% 38% at 76% 82%, rgba(217, 70, 239, 0.42), transparent 70%),
     radial-gradient(40% 34% at 12% 78%, rgba(45, 212, 191, 0.38), transparent 72%),
     var(--void);
-  /* Sin filter: blur(). Un blur de pantalla completa obliga al compositor a rehacer una
-     capa enorme cada vez que el video cambia de fotograma, y estos gradientes ya son
-     suaves por definicion. Era una de las fugas de bateria. */
+}
+
+/* -----------------------------------------------------------------------------
+   Marco de foco
+   Ni Safari ni iOS dicen si el autofoco cerro, asi que app.js mide la nitidez de
+   la escena. El marco abarca el encuadre util completo: lo que se ve es lo que
+   se evalua. Ambar = buscando, verde = la imagen esta en su punto.
+   Las esquinas se dibujan con gradientes (8 tiras solidas) en vez de bordes
+   completos: es la convencion de visor de camara y deja la imagen despejada.
+   -------------------------------------------------------------------------- */
+
+.focus-frame {
+  position: absolute;
+  inset: var(--hud-top) 14px var(--hud-bottom);
+  z-index: 2;
+  pointer-events: none;
+  border-radius: 26px;
+  color: rgba(255, 202, 107, 0.85);
+  transition: color 180ms ease, box-shadow 220ms ease, transform 220ms
+    cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Rectangulo completo, tenue: define el encuadre sin ensuciar la escena.
+   La sombra va aqui y no como filter sobre el marco entero: un filter a pantalla
+   completa por encima del video obliga al compositor a rehacer esa capa. */
+.focus-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid currentColor;
+  border-radius: inherit;
+  opacity: 0.4;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+/* Cantoneras gruesas: el mismo rectangulo con borde de 4 px, enmascarado para
+   que solo asomen las cuatro esquinas. Son las que dan la lectura solida. */
+.focus-frame::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 4px solid currentColor;
+  border-radius: 29px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  -webkit-mask:
+    linear-gradient(#000, #000) 0 0 / 42px 42px no-repeat,
+    linear-gradient(#000, #000) 100% 0 / 42px 42px no-repeat,
+    linear-gradient(#000, #000) 0 100% / 42px 42px no-repeat,
+    linear-gradient(#000, #000) 100% 100% / 42px 42px no-repeat;
+  mask:
+    linear-gradient(#000, #000) 0 0 / 42px 42px no-repeat,
+    linear-gradient(#000, #000) 100% 0 / 42px 42px no-repeat,
+    linear-gradient(#000, #000) 0 100% / 42px 42px no-repeat,
+    linear-gradient(#000, #000) 100% 100% / 42px 42px no-repeat;
+}
+
+.focus-frame.searching {
+  color: rgba(255, 202, 107, 0.85);
+}
+
+.focus-frame.locked {
+  color: var(--ok);
+  box-shadow:
+    0 0 0 1px rgba(92, 224, 168, 0.35),
+    0 0 26px rgba(92, 224, 168, 0.32),
+    inset 0 0 30px rgba(92, 224, 168, 0.12);
+  transform: scale(0.988);
+}
+
+/* -----------------------------------------------------------------------------
+   Estados del visor
+   -------------------------------------------------------------------------- */
+
+.camera-paused,
+.camera-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+}
+
+.camera-paused {
+  gap: 4px;
+  background: rgba(6, 10, 24, 0.55);
+}
+
+.camera-fallback {
+  gap: 14px;
+  background: rgba(8, 12, 26, 0.5);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.paused-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.paused-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.camera-fallback p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+  max-width: 26ch;
+}
+
+.native-camera-icon {
+  position: relative;
+  width: 46px;
+  height: 36px;
+  border-radius: 12px;
+  background: linear-gradient(
+    158deg,
+    rgba(var(--glass-body) / 0.22),
+    rgba(var(--glass-body) / 0.06)
+  );
+  box-shadow:
+    inset 0 1px 1px rgba(var(--key-light) / 0.4),
+    0 6px 14px -8px rgba(0, 0, 0, 0.8);
+}
+
+.native-camera-icon::after {
+  content: "";
+  position: absolute;
+  inset: 9px 14px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 34% 28%,
+    rgba(var(--key-light) / 0.5),
+    rgba(10, 16, 32, 0.85) 62%
+  );
+}
+
+.fallback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.fallback-actions .glass-button {
+  min-height: 44px;
+  padding: 10px 16px;
+  font-size: 14px;
 }
 
 /* -----------------------------------------------------------------------------
@@ -196,36 +374,51 @@ body {
 }
 
 /* -----------------------------------------------------------------------------
-   Estructura
+   Capa de controles
+   Flota sobre la imagen y solo intercepta el toque donde hay algo que tocar: el
+   resto de la pantalla sigue siendo el visor.
    -------------------------------------------------------------------------- */
 
-.app {
-  max-width: 480px;
-  margin: 0 auto;
-  /* El hueco de abajo deja sitio al dock fijo del disparador. */
-  padding: calc(14px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
-    calc(128px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+.hud {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  pointer-events: none;
 }
 
-.app-header {
+.hud-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 4px;
+  gap: 10px;
+  padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 0
+    calc(14px + env(safe-area-inset-left));
 }
 
-.app-header h1 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+.hud-top > * {
+  pointer-events: auto;
 }
 
-.net-chip {
+.hud-bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 40px calc(14px + env(safe-area-inset-right))
+    calc(12px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
+  /* Degradado de contraste: sin el, el texto blanco desaparece sobre una escena clara. */
+  background: linear-gradient(
+    to top,
+    rgba(6, 9, 20, 0.92),
+    rgba(6, 9, 20, 0.72) 45%,
+    rgba(6, 9, 20, 0)
+  );
+  pointer-events: auto;
+}
+
+.chip {
   padding: 6px 12px;
   border-radius: 999px;
   font-size: 12px;
@@ -234,179 +427,15 @@ body {
   white-space: nowrap;
 }
 
-.net-chip.online {
+.chip.online {
   color: var(--ok);
 }
 
-/* -----------------------------------------------------------------------------
-   Visor
-   -------------------------------------------------------------------------- */
-
-.viewer-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.viewer-frame {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 3 / 4;
-  max-height: 46vh;
-  padding: 5px;
-  border-radius: var(--radius-lg);
+.quality-chip {
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
   overflow: hidden;
-  contain: paint;
-  /* El video tapa el 100% del marco, asi que aqui el backdrop-filter no se ve pero si se
-     paga: el compositor lo recalcularia en cada fotograma de la camara. */
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-/* Aqui el vidrio esta DELANTE de la imagen: el reflejo y la franja cromatica
-   deben caer sobre el video, no detras. */
-.viewer-frame::before,
-.viewer-frame::after {
-  z-index: 3;
-}
-
-.viewer-frame video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  border-radius: calc(var(--radius-lg) - 6px);
-  background: #05070f;
-}
-
-/* -----------------------------------------------------------------------------
-   Indicador de foco
-   Ni Safari ni iOS dicen si el autofoco cerro, asi que app.js mide la nitidez del
-   centro del cuadro. Ambar = buscando, verde = la imagen esta en su punto.
-   -------------------------------------------------------------------------- */
-
-.focus-frame {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 46%;
-  aspect-ratio: 4 / 3;
-  transform: translate(-50%, -50%);
-  z-index: 2;
-  pointer-events: none;
-  border-radius: 14px;
-  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
-}
-
-.focus-frame.searching {
-  border: 1.5px solid rgba(255, 202, 107, 0.55);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
-}
-
-.focus-frame.locked {
-  border: 2px solid rgba(92, 224, 168, 0.95);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.3),
-    0 0 16px rgba(92, 224, 168, 0.45);
-  transform: translate(-50%, -50%) scale(0.94);
-}
-
-.camera-paused {
-  position: absolute;
-  inset: 5px;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  text-align: center;
-  border-radius: calc(var(--radius-lg) - 6px);
-  background: rgba(6, 10, 24, 0.72);
-}
-
-.paused-title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.paused-hint {
-  margin: 0;
-  font-size: 13px;
-  color: var(--ink-soft);
-}
-
-.camera-fallback {
-  position: absolute;
-  inset: 5px;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 20px;
-  text-align: center;
-  border-radius: calc(var(--radius-lg) - 6px);
-  background: rgba(8, 12, 26, 0.42);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-}
-
-.camera-fallback p {
-  margin: 0;
-  font-size: 14px;
-  color: var(--ink-soft);
-  max-width: 26ch;
-}
-
-.native-camera-icon {
-  width: 46px;
-  height: 36px;
-  border-radius: 12px;
-  background: linear-gradient(
-    158deg,
-    rgba(var(--glass-body) / 0.22),
-    rgba(var(--glass-body) / 0.06)
-  );
-  box-shadow:
-    inset 0 1px 1px rgba(var(--key-light) / 0.4),
-    0 6px 14px -8px rgba(0, 0, 0, 0.8);
-  position: relative;
-}
-
-.native-camera-icon::after {
-  content: "";
-  position: absolute;
-  inset: 9px 14px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 34% 28%,
-    rgba(var(--key-light) / 0.5),
-    rgba(10, 16, 32, 0.85) 62%
-  );
-}
-
-.fallback-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-}
-
-.fallback-actions .glass-button {
-  min-height: 44px;
-  padding: 10px 16px;
-  font-size: 14px;
-}
-
-.capture-quality {
-  margin: 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--ink-faint);
-  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
 }
 
 /* -----------------------------------------------------------------------------
@@ -416,30 +445,33 @@ body {
    reflejo especular se desplaza porque la normal de la superficie gira.
    -------------------------------------------------------------------------- */
 
-/* Barra inferior fija: el disparador vive donde llega el pulgar. */
+/* Rejilla de tres columnas: el obturador queda centrado en la pantalla aunque
+   el boton de Google aparezca o desaparezca a un lado. */
 .dock {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 10px;
-  padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
-  background: linear-gradient(to top, rgba(7, 11, 24, 0.92), rgba(7, 11, 24, 0));
-  pointer-events: none;
-}
-
-.dock > * {
-  pointer-events: auto;
+  padding-top: 2px;
 }
 
 .dock .connect-button {
+  justify-self: start;
+  min-width: 0;
   min-height: 44px;
-  padding: 10px 18px;
-  font-size: 15px;
+  padding: 10px 14px;
+  font-size: 14px;
+  gap: 8px;
+}
+
+.dock .connect-button span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dock .shutter {
+  grid-column: 2;
 }
 
 .glass-button {
@@ -536,7 +568,8 @@ body {
   );
 }
 
-.glass-button:focus-visible {
+.glass-button:focus-visible,
+.shutter:focus-visible {
   outline: 2px solid rgba(var(--sky-light) / 0.75);
   outline-offset: 3px;
 }
@@ -556,8 +589,8 @@ body {
 }
 
 .connect-button .button-icon {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -569,7 +602,7 @@ body {
     rgba(var(--glass-body) / 0.1)
   );
   box-shadow: inset 0 1px 1px rgba(var(--key-light) / 0.5);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -617,11 +650,6 @@ body {
   transform: scale(0.9);
 }
 
-.shutter:focus-visible {
-  outline: 2px solid rgba(var(--sky-light) / 0.75);
-  outline-offset: 4px;
-}
-
 .shutter:disabled {
   cursor: not-allowed;
 }
@@ -647,18 +675,18 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-radius: var(--radius-md);
 }
 
 .global-progress-copy {
+  position: relative;
+  z-index: 2;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   font-size: 14px;
   color: var(--ink-soft);
-  position: relative;
-  z-index: 2;
 }
 
 .global-progress-copy strong {
@@ -692,42 +720,19 @@ body {
 }
 
 /* -----------------------------------------------------------------------------
-   Ultimas fotos
+   Ultimas fotos: una tira de miniaturas, no media pantalla.
    -------------------------------------------------------------------------- */
 
 .recent {
-  padding: 0 2px;
-}
-
-.recent-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
+  min-height: 58px;
 }
 
-.recent-head h2 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--ink-soft);
-}
-
-.counters {
-  margin: 0;
-  font-size: 12px;
-  color: var(--ink-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.counters .dot {
-  opacity: 0.5;
-}
-
-/* Tira horizontal de miniaturas: el historial ocupa una fila, no media pantalla. */
 .recent-list {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   padding: 2px 0;
   list-style: none;
@@ -742,10 +747,24 @@ body {
   display: none;
 }
 
+.counters {
+  flex: none;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: right;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.counters .dot {
+  opacity: 0.5;
+}
+
 .recent-empty {
   font-size: 12px;
   color: var(--ink-faint);
-  padding: 18px 2px;
+  padding: 20px 2px;
 }
 
 .shot {
@@ -967,20 +986,19 @@ body {
 }
 
 /* -----------------------------------------------------------------------------
-   Pie
+   Pie de estado
    -------------------------------------------------------------------------- */
 
 .app-footer {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 0 6px;
+  gap: 2px;
   text-align: center;
 }
 
 .status-line {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 550;
   color: var(--ink-soft);
 }
@@ -999,7 +1017,7 @@ body {
 
 .hint {
   margin: 0;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--ink-faint);
 }
 

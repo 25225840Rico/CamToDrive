@@ -47,6 +47,15 @@
 
       <header class="hud-top">
         <span class="chip glass" id="networkStatus">Sin conexion</span>
+        <!-- Con que cuenta se esta subiendo, siempre a la vista. Es la unica defensa contra
+             un token silencioso de la cuenta equivocada: si no se ve, no se nota. -->
+        <button
+          class="chip glass account-chip"
+          id="accountChip"
+          type="button"
+          aria-live="polite"
+          hidden
+        ></button>
         <span class="chip glass quality-chip" id="captureQuality" hidden></span>
       </header>
 

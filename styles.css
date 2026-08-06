@@ -393,8 +393,17 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 0
+  padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 24px
     calc(14px + env(safe-area-inset-left));
+  /* Mismo degradado de contraste que el HUD inferior, por el mismo motivo: esta app se usa
+     al aire libre y contra cielo o pared blanca el texto claro de los chips se borra. Aqui
+     importa mas todavia, porque el chip de cuenta es la unica senal de a que Drive se sube. */
+  background: linear-gradient(
+    to bottom,
+    rgba(6, 9, 20, 0.85),
+    rgba(6, 9, 20, 0.55) 55%,
+    rgba(6, 9, 20, 0)
+  );
 }
 
 .hud-top > * {
@@ -431,11 +440,46 @@ body {
   color: var(--ok);
 }
 
+/* Chip de cuenta. Es tocable, asi que respeta el minimo tactil de 44 px de alto aunque el
+   texto sea pequeno, y se recorta con ellipsis: un correo largo no debe empujar el HUD. */
+.account-chip {
+  font-family: inherit;
+  border: 0;
+  cursor: pointer;
+  min-height: 44px;
+  /* `overflow: hidden` le quita a un item flex su ancho minimo automatico, asi que sin este
+     min-width el chip se dejaria aplastar por los vecinos hasta ser intocable en 320 px. */
+  min-width: 120px;
+  max-width: 52vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-soft);
+  /* Refuerzo por si el degradado del HUD no basta contra una escena muy clara. */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+.account-chip.ok {
+  color: var(--ok);
+}
+
+.account-chip.error {
+  color: var(--error);
+  font-weight: 700;
+}
+
+.account-chip:focus-visible {
+  outline: 2px solid var(--ok);
+  outline-offset: 2px;
+}
+
+/* Cede el espacio antes que el chip de cuenta: la calidad es informativa, la cuenta no. */
 .quality-chip {
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
 }
 
 /* -----------------------------------------------------------------------------
@@ -836,6 +880,18 @@ body {
 
 .shot.error .shot-badge {
   color: var(--error);
+}
+
+/* Foto retenida porque la tomo otra cuenta. No es un error ni una espera: no va a subir
+   con esta sesion, y tiene que distinguirse de un simple "pendiente". */
+.shot.blocked .shot-badge {
+  color: #ffd166;
+  background: rgba(46, 30, 4, 0.88);
+}
+
+.shot.blocked .shot-button {
+  outline: 1px solid rgba(255, 209, 102, 0.55);
+  outline-offset: -1px;
 }
 
 .recent-progress {

@@ -102,6 +102,37 @@ Si `getUserMedia` falla o el permiso fue denegado, la app muestra **Reintentar c
 - Archivos de hasta 5 MB van por subida multipart; por encima se usa una sesion resumable de Drive.
 - Cada foto lleva un identificador propio en `appProperties`, asi que un reintento nunca crea un duplicado en Drive.
 
+## A que cuenta van las fotos: lee esto antes de tocar `config.js`
+
+En Google Drive **el propietario de un archivo es siempre quien lo sube**, no el dueño de la
+carpeta que lo contiene. Un archivo puede estar dentro de tu carpeta, verse en tu Drive, y aun
+asi pertenecer a otra persona y consumir *su* cuota de 15 GB.
+
+Eso hace que baste con que el navegador tenga la sesion de otra cuenta activa para que las
+fotos terminen en el Drive equivocado. **Ya ocurrio:** el 31 de julio de 2026 un lote de fotos
+quedo a nombre de otra cuenta sin que la app diera el menor aviso, porque la interfaz se veia
+identica estuviera quien estuviera conectado.
+
+La app se defiende con tres medidas, y conviene no desarmarlas:
+
+1. **`ALLOWED_EMAILS` en `config.js`.** Tras recibir el token, la app pregunta a Drive de quien
+   es (`drive/v3/about?fields=user`) **antes de subir nada**. Si el correo no esta en la lista,
+   rechaza el token y bloquea la subida. Con la lista vacia (`[]`) aceptas cualquier cuenta.
+2. **El correo conectado se muestra siempre** en el chip superior del visor: verde si esta
+   autorizado, rojo si fue rechazado. Tocarlo abre el selector de cuentas de Google. Un fallo
+   que no se ve es un fallo que se repite.
+3. **Cada foto en la cola recuerda con que cuenta se tomo.** Una foto nunca se sube con una
+   cuenta distinta a la suya, ni siquiera si el token expira y reconectas con otra.
+
+Ademas, cada archivo subido queda marcado en Drive con `appProperties.camtodriveOwner`, asi que
+siempre se puede auditar despues con que cuenta se subio.
+
+### Si unas fotos quedaron en el Drive equivocado
+
+No hace falta moverlas ni volver a subirlas: ya estan en la carpeta correcta. Basta con abrir
+la carpeta en Drive, seleccionar los archivos, y usar **Transferir propiedad** hacia la cuenta
+que corresponde. Ordena por la columna *Propietario* para verlos agrupados.
+
 ## Notas de seguridad y privacidad
 
 - No hay backend: las fotos no pasan por servidores propios.

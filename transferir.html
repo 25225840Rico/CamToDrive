@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#070b18">
+    <title>Transferir propiedad — CamToDrive</title>
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="config.js" defer></script>
+    <style>
+      :root {
+        --fondo: #070b18;
+        --panel: rgba(255, 255, 255, 0.06);
+        --borde: rgba(255, 255, 255, 0.14);
+        --tinta: #f4f6fb;
+        --tinta-suave: #a6b0c8;
+        --ok: #4ade80;
+        --aviso: #fbbf24;
+        --error: #f87171;
+        --acento: #60a5fa;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        padding: 24px 16px 64px;
+        background: var(--fondo);
+        color: var(--tinta);
+        font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+
+      main { max-width: 780px; margin: 0 auto; }
+
+      h1 { font-size: 22px; margin: 0 0 4px; }
+      h2 { font-size: 16px; margin: 28px 0 10px; }
+
+      .sub { color: var(--tinta-suave); margin: 0 0 24px; }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--borde);
+        border-radius: 14px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+
+      .aviso {
+        border-color: rgba(251, 191, 36, 0.45);
+        background: rgba(251, 191, 36, 0.09);
+      }
+
+      button {
+        font: inherit;
+        font-weight: 600;
+        color: var(--tinta);
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid var(--borde);
+        border-radius: 10px;
+        padding: 11px 18px;
+        min-height: 44px;
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      button:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+
+      button.primario {
+        background: rgba(96, 165, 250, 0.22);
+        border-color: rgba(96, 165, 250, 0.55);
+      }
+
+      button.peligro {
+        background: rgba(248, 113, 113, 0.18);
+        border-color: rgba(248, 113, 113, 0.5);
+      }
+
+      label { display: block; font-size: 13px; color: var(--tinta-suave); margin-bottom: 6px; }
+
+      input {
+        font: inherit;
+        color: var(--tinta);
+        background: rgba(0, 0, 0, 0.32);
+        border: 1px solid var(--borde);
+        border-radius: 10px;
+        padding: 11px 12px;
+        min-height: 44px;
+        width: 100%;
+        max-width: 340px;
+      }
+
+      input:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+
+      .fila { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+      .acciones { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+
+      .cuenta { font-weight: 700; }
+      .cuenta.ok { color: var(--ok); }
+      .cuenta.error { color: var(--error); }
+
+      .tabla-scroll { overflow-x: auto; }
+
+      table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 520px; }
+      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--borde); }
+      th { color: var(--tinta-suave); font-weight: 600; }
+      td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      tr.mia { background: rgba(96, 165, 250, 0.09); }
+
+      .barra { height: 8px; border-radius: 999px; background: rgba(255,255,255,0.12); overflow: hidden; }
+      .barra span { display: block; height: 100%; width: 0; background: var(--ok); transition: width 0.2s; }
+
+      #registro {
+        max-height: 280px;
+        overflow-y: auto;
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      #registro p { margin: 0 0 2px; }
+      .r-ok { color: var(--ok); }
+      .r-mal { color: var(--error); }
+      .r-info { color: var(--tinta-suave); }
+
+      .oculto { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Transferir propiedad de fotos</h1>
+      <p class="sub">
+        Devuelve al dueño correcto los archivos que quedaron a nombre de otra cuenta dentro de la
+        carpeta de CamToDrive.
+      </p>
+
+      <div class="panel aviso">
+        <strong>Cómo funciona y por qué es seguro</strong>
+        <p>
+          En Drive sólo el propietario de un archivo puede ceder su propiedad. Por eso esta
+          herramienta <strong>únicamente muestra y transfiere los archivos que pertenecen a la
+          cuenta con la que entras</strong>: no puede tocar los de nadie más.
+        </p>
+        <p>
+          Los archivos <strong>no se mueven ni se copian</strong>: siguen siendo el mismo archivo
+          en la misma carpeta. Sólo cambia quién es su dueño, y con ello a qué cuenta se le cobra
+          el espacio. <strong>No hace falta borrar nada.</strong>
+        </p>
+      </div>
+
+      <!-- ESTADO: conexión -->
+      <section class="panel" aria-labelledby="t-conexion">
+        <h2 id="t-conexion" style="margin-top:0">1. Conecta la cuenta que tiene los archivos</h2>
+        <p id="estadoConexion" role="status" aria-live="polite">Cargando Google…</p>
+        <div class="acciones">
+          <button id="btnConectar" type="button" class="primario" disabled>Conectar Google</button>
+          <button id="btnCambiar" type="button" class="oculto">Cambiar de cuenta</button>
+        </div>
+      </section>
+
+      <!-- ESTADO: análisis -->
+      <section class="panel oculto" id="panelAnalisis" aria-labelledby="t-analisis">
+        <h2 id="t-analisis" style="margin-top:0">2. Revisa qué hay</h2>
+        <div class="fila">
+          <div>
+            <label for="fechaDesde">Sólo archivos creados desde</label>
+            <input type="date" id="fechaDesde" value="2026-07-31">
+          </div>
+          <button id="btnAnalizar" type="button" class="primario">Analizar carpeta</button>
+        </div>
+        <p id="estadoAnalisis" role="status" aria-live="polite"></p>
+        <div id="resumen"></div>
+        <div class="tabla-scroll"><table id="tabla" class="oculto"></table></div>
+      </section>
+
+      <!-- ESTADO: transferencia -->
+      <section class="panel oculto" id="panelTransferir" aria-labelledby="t-transferir">
+        <h2 id="t-transferir" style="margin-top:0">3. Transfiere</h2>
+        <div class="fila">
+          <div>
+            <label for="destino">Cuenta que debe quedar como propietaria</label>
+            <input type="email" id="destino" placeholder="correo@gmail.com">
+          </div>
+        </div>
+        <div class="acciones">
+          <button id="btnProbar" type="button">Probar con 1 archivo</button>
+          <button id="btnTransferir" type="button" class="peligro">Transferir todos</button>
+        </div>
+        <p class="sub" style="margin:12px 0 0; font-size:13px">
+          Empieza por el archivo de prueba. Google trata de forma distinta las cuentas normales y
+          las de empresa: si la prueba funciona, el lote completo funcionará igual.
+        </p>
+        <div id="progresoCaja" class="oculto" style="margin-top:16px">
+          <div class="barra"><span id="barra"></span></div>
+          <p id="progresoTexto" role="status" aria-live="polite" style="font-size:13px"></p>
+        </div>
+      </section>
+
+      <!-- ESTADO: salida de la carpeta -->
+      <section class="panel oculto" id="panelSalir" aria-labelledby="t-salir">
+        <h2 id="t-salir" style="margin-top:0">4. Sacar esta cuenta de la carpeta</h2>
+        <p>
+          Cuando ya no quede ningún archivo tuyo dentro, este botón quita tu acceso a la carpeta:
+          desaparece de tu Drive y no vuelve a subir nada aquí por accidente.
+        </p>
+        <p id="estadoSalir" role="status" aria-live="polite"></p>
+        <div class="acciones">
+          <button id="btnComprobar" type="button">Comprobar si ya no queda nada mío</button>
+          <button id="btnSalir" type="button" class="peligro" disabled>Salir de la carpeta</button>
+        </div>
+      </section>
+
+      <!-- ESTADO: registro -->
+      <section class="panel oculto" id="panelRegistro" aria-labelledby="t-registro">
+        <h2 id="t-registro" style="margin-top:0">Registro</h2>
+        <div id="registro" role="log" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script>
+      (function () {
+        "use strict";
+
+        var SCOPE = "https://www.googleapis.com/auth/drive";
+        var FILES = "https://www.googleapis.com/drive/v3/files";
+        var ABOUT = "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress),storageQuota";
+
+        var el = {};
+        var estado = { token: null, email: "", cliente: null, archivos: [], mios: [] };
+
+        document.addEventListener("DOMContentLoaded", function () {
+          [
+            "estadoConexion", "btnConectar", "btnCambiar", "panelAnalisis", "fechaDesde",
+            "btnAnalizar", "estadoAnalisis", "resumen", "tabla", "panelTransferir", "destino",
+            "btnProbar", "btnTransferir", "progresoCaja", "barra", "progresoTexto",
+            "panelSalir", "estadoSalir", "btnComprobar", "btnSalir",
+            "panelRegistro", "registro",
+          ].forEach(function (id) { el[id] = document.getElementById(id); });
+
+          el.btnConectar.addEventListener("click", pedirToken);
+          el.btnCambiar.addEventListener("click", pedirToken);
+          el.btnAnalizar.addEventListener("click", analizar);
+          el.btnProbar.addEventListener("click", function () { transferir(true); });
+          el.btnTransferir.addEventListener("click", function () { transferir(false); });
+          el.btnComprobar.addEventListener("click", comprobarSalida);
+          el.btnSalir.addEventListener("click", salirDeLaCarpeta);
+
+          var cfg = config();
+          if (Array.isArray(cfg.ALLOWED_EMAILS) && cfg.ALLOWED_EMAILS[0]) {
+            el.destino.value = cfg.ALLOWED_EMAILS[0];
+          }
+
+          if (!cfg.FOLDER_ID) {
+            el.estadoConexion.textContent =
+              "Falta FOLDER_ID en config.js: no se sabe qué carpeta revisar.";
+            return;
+          }
+          if (!cfg.CLIENT_ID || cfg.CLIENT_ID.indexOf(".apps.googleusercontent.com") === -1) {
+            el.estadoConexion.textContent = "Falta un CLIENT_ID válido en config.js.";
+            return;
+          }
+
+          esperarGoogle();
+        });
+
+        function config() {
+          return typeof CONFIG !== "undefined" ? CONFIG : {};
+        }
+
+        function esperarGoogle() {
+          var intentos = 0;
+          var t = setInterval(function () {
+            if (window.google && google.accounts && google.accounts.oauth2) {
+              clearInterval(t);
+              estado.cliente = google.accounts.oauth2.initTokenClient({
+                client_id: config().CLIENT_ID,
+                scope: SCOPE,
+                callback: recibirToken,
+              });
+              el.btnConectar.disabled = false;
+              el.estadoConexion.textContent = "Listo para conectar.";
+            } else if (++intentos > 60) {
+              clearInterval(t);
+              el.estadoConexion.textContent =
+                "No se pudo cargar Google. Revisa la conexión y recarga la página.";
+            }
+          }, 250);
+        }
+
+        function pedirToken(forzarSelector) {
+          if (!estado.cliente) return;
+          el.estadoConexion.textContent = "Esperando a Google…";
+          // Siempre con selector explícito: esta herramienta existe justamente porque una
+          // reconexión silenciosa mandó archivos a la cuenta equivocada.
+          estado.cliente.requestAccessToken({ prompt: "select_account" });
+        }
+
+        function recibirToken(respuesta) {
+          if (!respuesta || respuesta.error) {
+            el.estadoConexion.innerHTML = '<span class="cuenta error">No se completó la conexión.</span>';
+            return;
+          }
+          estado.token = respuesta.access_token;
+          identificar();
+        }
+
+        function identificar() {
+          el.estadoConexion.textContent = "Verificando de quién es la sesión…";
+          fetch(ABOUT, { headers: { Authorization: "Bearer " + estado.token } })
+            .then(function (r) {
+              if (!r.ok) throw new Error("HTTP " + r.status);
+              return r.json();
+            })
+            .then(function (d) {
+              estado.email = (d.user && d.user.emailAddress) || "";
+              var q = d.storageQuota || {};
+              var uso = "";
+              if (q.limit) {
+                uso = " · " + tam(q.usage) + " de " + tam(q.limit) + " usados";
+              }
+              el.estadoConexion.innerHTML =
+                'Conectado como <span class="cuenta ok">' + txt(estado.email) + "</span>" + txt(uso);
+              el.btnCambiar.classList.remove("oculto");
+              el.panelAnalisis.classList.remove("oculto");
+              el.panelSalir.classList.remove("oculto");
+              el.btnSalir.disabled = true;
+              el.estadoSalir.textContent = "";
+              log("Sesión verificada: " + estado.email, "info");
+            })
+            .catch(function (e) {
+              estado.token = null;
+              el.estadoConexion.innerHTML =
+                '<span class="cuenta error">No se pudo verificar la cuenta.</span> ' + txt(e.message);
+            });
+        }
+
+        function api(url, opciones) {
+          opciones = opciones || {};
+          var h = new Headers(opciones.headers || {});
+          h.set("Authorization", "Bearer " + estado.token);
+          if (opciones.body) h.set("Content-Type", "application/json; charset=UTF-8");
+          return fetch(url, Object.assign({}, opciones, { headers: h }));
+        }
+
+        function errorDe(r) {
+          return r.json().then(
+            function (d) { return (d.error && d.error.message) || "HTTP " + r.status; },
+            function () { return "HTTP " + r.status; }
+          );
+        }
+
+        function analizar() {
+          el.btnAnalizar.disabled = true;
+          el.estadoAnalisis.textContent = "Leyendo la carpeta…";
+          el.resumen.innerHTML = "";
+          el.tabla.classList.add("oculto");
+          estado.archivos = [];
+
+          leerPagina(null)
+            .then(function () {
+              var desde = el.fechaDesde.value ? new Date(el.fechaDesde.value + "T00:00:00") : null;
+              var lista = estado.archivos.filter(function (f) {
+                return !desde || new Date(f.createdTime) >= desde;
+              });
+              estado.mios = lista.filter(function (f) { return f.ownedByMe; });
+              pintar(lista);
+            })
+            .catch(function (e) {
+              el.estadoAnalisis.textContent = "Error al leer la carpeta: " + e.message;
+            })
+            .then(function () { el.btnAnalizar.disabled = false; });
+        }
+
+        function leerPagina(pageToken) {
+          var p = new URLSearchParams({
+            q: "'" + config().FOLDER_ID + "' in parents and trashed=false",
+            fields: "nextPageToken,files(id,name,size,createdTime,ownedByMe,owners(emailAddress))",
+            pageSize: "1000",
+          });
+          if (pageToken) p.set("pageToken", pageToken);
+
+          return api(FILES + "?" + p.toString())
+            .then(function (r) {
+              if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
+              return r.json();
+            })
+            .then(function (d) {
+              estado.archivos = estado.archivos.concat(d.files || []);
+              el.estadoAnalisis.textContent = "Leídos " + estado.archivos.length + " archivos…";
+              if (d.nextPageToken) return leerPagina(d.nextPageToken);
+            });
+        }
+
+        function pintar(lista) {
+          if (lista.length === 0) {
+            el.estadoAnalisis.textContent =
+              "No hay archivos en ese rango de fechas. Prueba con una fecha anterior.";
+            el.panelTransferir.classList.add("oculto");
+            return;
+          }
+
+          var porDueno = {};
+          lista.forEach(function (f) {
+            var d = (f.owners && f.owners[0] && f.owners[0].emailAddress) || "desconocido";
+            if (!porDueno[d]) porDueno[d] = { n: 0, bytes: 0 };
+            porDueno[d].n += 1;
+            porDueno[d].bytes += Number(f.size || 0);
+          });
+
+          var html = "<h2>Qué hay en ese rango</h2><div class='tabla-scroll'><table><tr>" +
+            "<th>Propietario</th><th class='num'>Archivos</th><th class='num'>Peso</th></tr>";
+          Object.keys(porDueno).forEach(function (d) {
+            var esMio = d === estado.email;
+            html += "<tr" + (esMio ? " class='mia'" : "") + "><td>" + txt(d) +
+              (esMio ? " <strong>(esta sesión)</strong>" : "") + "</td><td class='num'>" +
+              porDueno[d].n + "</td><td class='num'>" + tam(porDueno[d].bytes) + "</td></tr>";
+          });
+          html += "</table></div>";
+          el.resumen.innerHTML = html;
+
+          var bytesMios = estado.mios.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
+
+          if (estado.mios.length === 0) {
+            el.estadoAnalisis.textContent =
+              "Ningún archivo de este rango pertenece a " + estado.email +
+              ", así que no hay nada que esta sesión pueda transferir. " +
+              "¿Conectaste la cuenta correcta?";
+            el.panelTransferir.classList.add("oculto");
+            el.tabla.classList.add("oculto");
+            return;
+          }
+
+          el.estadoAnalisis.textContent =
+            estado.mios.length + " archivos (" + tam(bytesMios) + ") pertenecen a " +
+            estado.email + " y pueden transferirse.";
+
+          // Si el filtro de fecha deja fuera archivos propios, decirlo: el objetivo es que
+          // esta cuenta no aloje nada, y un rango corto lo dejaria a medias sin avisar.
+          var todosMios = estado.archivos.filter(function (f) { return f.ownedByMe; });
+          if (todosMios.length > estado.mios.length) {
+            var fuera = todosMios.length - estado.mios.length;
+            el.estadoAnalisis.textContent +=
+              " Ojo: hay " + fuera + " archivos tuyos más antiguos que la fecha del filtro. " +
+              "Borra la fecha para incluirlos todos.";
+          }
+
+          var t = "<tr><th>Archivo</th><th>Creado</th><th class='num'>Peso</th></tr>";
+          estado.mios.slice(0, 200).forEach(function (f) {
+            t += "<tr class='mia'><td>" + txt(f.name) + "</td><td>" +
+              txt(String(f.createdTime).slice(0, 10)) + "</td><td class='num'>" +
+              tam(f.size) + "</td></tr>";
+          });
+          if (estado.mios.length > 200) {
+            t += "<tr><td colspan='3'>… y " + (estado.mios.length - 200) + " más</td></tr>";
+          }
+          el.tabla.innerHTML = t;
+          el.tabla.classList.remove("oculto");
+          el.panelTransferir.classList.remove("oculto");
+        }
+
+        function transferir(soloUno) {
+          var destino = (el.destino.value || "").trim();
+          if (!destino || destino.indexOf("@") === -1) {
+            alerta("Escribe el correo de la cuenta que debe quedar como propietaria.");
+            return;
+          }
+          if (destino.toLowerCase() === (estado.email || "").toLowerCase()) {
+            alerta("Ese es el correo de la sesión actual: los archivos ya le pertenecen.");
+            return;
+          }
+
+          var lote = soloUno ? estado.mios.slice(0, 1) : estado.mios.slice();
+          if (lote.length === 0) return;
+
+          if (!soloUno) {
+            var ok = window.confirm(
+              "Se cederá la propiedad de " + lote.length + " archivos a " + destino + ".\n\n" +
+              "Los archivos NO se mueven ni se borran. ¿Continuar?"
+            );
+            if (!ok) return;
+          }
+
+          el.btnProbar.disabled = true;
+          el.btnTransferir.disabled = true;
+          el.progresoCaja.classList.remove("oculto");
+          el.panelRegistro.classList.remove("oculto");
+          log("--- " + (soloUno ? "Prueba con 1 archivo" : "Transferencia de " + lote.length) +
+            " hacia " + destino + " ---", "info");
+
+          var hechos = 0, fallos = 0, i = 0;
+
+          function siguiente() {
+            if (i >= lote.length) return terminar();
+            var f = lote[i++];
+            return cederUno(f.id, destino)
+              .then(function (r) {
+                if (r.ok) {
+                  hechos++;
+                  log("OK   " + f.name + "  (" + r.via + ")", "ok");
+                } else {
+                  fallos++;
+                  log("FALLO " + f.name + "  " + r.error, "mal");
+                }
+              })
+              .then(function () {
+                var p = Math.round(((hechos + fallos) / lote.length) * 100);
+                el.barra.style.width = p + "%";
+                el.progresoTexto.textContent =
+                  hechos + " transferidos, " + fallos + " con error, de " + lote.length;
+                return new Promise(function (res) { setTimeout(res, 120); }).then(siguiente);
+              });
+          }
+
+          function terminar() {
+            el.btnProbar.disabled = false;
+            el.btnTransferir.disabled = false;
+            if (fallos === 0 && hechos > 0) {
+              log("Listo. Si Google pidió invitación, " + destino + " debe aceptarla desde su " +
+                "correo o desde Drive; hasta entonces los archivos seguirán apareciendo aquí " +
+                "como propios. Eso es normal, no es un error.", "info");
+            } else if (hechos === 0) {
+              log("No se transfirió ningún archivo. Revisa los errores de arriba.", "mal");
+            }
+            if (hechos > 0) analizar();
+          }
+
+          siguiente();
+        }
+
+        // Google trata distinto las cuentas personales y las de Workspace. Se intenta la vía
+        // directa y, si la rechaza, la invitación pendiente que usan las cuentas normales.
+        function cederUno(fileId, destino) {
+          var base = FILES + "/" + encodeURIComponent(fileId) + "/permissions";
+
+          return api(base + "?transferOwnership=true&sendNotificationEmail=true", {
+            method: "POST",
+            body: JSON.stringify({ role: "owner", type: "user", emailAddress: destino }),
+          })
+            .then(function (r) {
+              if (r.ok) return { ok: true, via: "propiedad directa" };
+              return errorDe(r).then(function (m1) {
+                return api(base + "?sendNotificationEmail=true", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    role: "writer",
+                    type: "user",
+                    emailAddress: destino,
+                    pendingOwner: true,
+                  }),
+                }).then(function (r2) {
+                  if (r2.ok) return { ok: true, via: "invitación pendiente de aceptar" };
+                  return errorDe(r2).then(function (m2) {
+                    return { ok: false, error: "directa: " + m1 + " | pendiente: " + m2 };
+                  });
+                });
+              });
+            })
+            .catch(function (e) {
+              return { ok: false, error: e.message };
+            });
+        }
+
+        // ---- Paso 4: dejar de ocupar espacio y salir de la carpeta -------------------
+        //
+        // Salir es irreversible desde esta sesion: si quedara un solo archivo propio dentro,
+        // ya no habria forma de cederlo (solo el dueno puede, y perderia el acceso). Por eso
+        // el boton nace bloqueado y solo lo desbloquea una comprobacion real sobre Drive,
+        // esta vez SIN filtro de fecha: mira toda la carpeta, no el rango elegido arriba.
+        function comprobarSalida() {
+          el.btnComprobar.disabled = true;
+          el.btnSalir.disabled = true;
+          el.estadoSalir.textContent = "Revisando la carpeta entera…";
+          estado.archivos = [];
+
+          leerPagina(null)
+            .then(function () {
+              var mios = estado.archivos.filter(function (f) { return f.ownedByMe; });
+              var bytes = mios.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
+
+              if (mios.length > 0) {
+                el.estadoSalir.textContent =
+                  "Todavía quedan " + mios.length + " archivos tuyos (" + tam(bytes) +
+                  ") en la carpeta. Transfiérelos primero: si sales ahora, seguirían ocupando " +
+                  "tu espacio y ya no podrías cederlos.";
+                log("Salida bloqueada: quedan " + mios.length + " archivos propios.", "mal");
+                return;
+              }
+
+              el.estadoSalir.textContent =
+                "No queda ningún archivo tuyo en la carpeta: ya no ocupa nada de tu espacio. " +
+                "Puedes salir cuando quieras.";
+              el.btnSalir.disabled = false;
+              log("Comprobación OK: 0 archivos propios en la carpeta.", "ok");
+            })
+            .catch(function (e) {
+              el.estadoSalir.textContent = "No se pudo comprobar: " + e.message;
+            })
+            .then(function () { el.btnComprobar.disabled = false; });
+        }
+
+        function salirDeLaCarpeta() {
+          var ok = window.confirm(
+            "Vas a quitar el acceso de " + estado.email + " a la carpeta.\n\n" +
+            "La carpeta desaparecerá de su Drive y no podrá volver a entrar salvo que el " +
+            "dueño la comparta de nuevo. Los archivos NO se borran.\n\n¿Continuar?"
+          );
+          if (!ok) return;
+
+          el.btnSalir.disabled = true;
+          el.panelRegistro.classList.remove("oculto");
+          el.estadoSalir.textContent = "Saliendo…";
+
+          var carpeta = FILES + "/" + encodeURIComponent(config().FOLDER_ID) + "/permissions";
+
+          api(carpeta + "?fields=permissions(id,emailAddress,role)")
+            .then(function (r) {
+              if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
+              return r.json();
+            })
+            .then(function (d) {
+              var mio = (d.permissions || []).filter(function (p) {
+                return (p.emailAddress || "").toLowerCase() === estado.email.toLowerCase();
+              })[0];
+              if (!mio) {
+                throw new Error(
+                  "Esta cuenta no tiene un permiso propio sobre la carpeta (quizá lo hereda " +
+                  "de un enlace compartido). Debe quitarlo el dueño de la carpeta."
+                );
+              }
+              if (mio.role === "owner") {
+                throw new Error("Esta cuenta es la dueña de la carpeta: no puede salir de ella.");
+              }
+              return api(carpeta + "/" + encodeURIComponent(mio.id), { method: "DELETE" });
+            })
+            .then(function (r) {
+              if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
+              el.estadoSalir.textContent =
+                "Listo. " + estado.email + " ya no tiene acceso a la carpeta y no ocupa nada " +
+                "de su espacio.";
+              log("Acceso de " + estado.email + " retirado de la carpeta.", "ok");
+              el.panelAnalisis.classList.add("oculto");
+              el.panelTransferir.classList.add("oculto");
+            })
+            .catch(function (e) {
+              el.estadoSalir.textContent = "No se pudo salir: " + e.message;
+              log("Fallo al salir de la carpeta: " + e.message, "mal");
+              el.btnSalir.disabled = false;
+            });
+        }
+
+        function alerta(mensaje) {
+          el.panelRegistro.classList.remove("oculto");
+          log(mensaje, "mal");
+        }
+
+        function log(mensaje, clase) {
+          var p = document.createElement("p");
+          p.className = "r-" + (clase === "ok" ? "ok" : clase === "mal" ? "mal" : "info");
+          p.textContent = mensaje;
+          el.registro.appendChild(p);
+          el.registro.scrollTop = el.registro.scrollHeight;
+        }
+
+        function txt(v) {
+          var d = document.createElement("div");
+          d.textContent = String(v == null ? "" : v);
+          return d.innerHTML;
+        }
+
+        function tam(bytes) {
+          var n = Number(bytes || 0);
+          if (!n) return "—";
+          var u = ["B", "KB", "MB", "GB"];
+          var i = 0;
+          while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+          return n.toFixed(n < 10 && i > 0 ? 1 : 0) + " " + u[i];
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -7,6 +7,18 @@
 // 4. Agrega tu URL de GitHub Pages en "Authorized JavaScript origins".
 const CLIENT_ID = "430217123425-7lad1gutumj5lreq7d5jsb6153ab0rlv.apps.googleusercontent.com";
 
+// Correos autorizados a subir fotos. LA PROTECCION MAS IMPORTANTE DE LA APP.
+//
+// En Google Drive el propietario de un archivo es SIEMPRE quien lo sube, no el dueno de la
+// carpeta. Si el navegador tiene la sesion de otra cuenta activa, Google puede entregar un
+// token de ESA cuenta sin mostrar ninguna pantalla, y las fotos quedan en su Drive aunque
+// caigan dentro de la carpeta correcta. Eso ya paso: el 31 de julio de 2026 un lote de fotos
+// quedo a nombre de otra cuenta sin que la app diera el menor aviso.
+//
+// Con esta lista la app verifica de quien es el token ANTES de subir nada y bloquea la
+// subida si no coincide. Deja la lista vacia ([]) solo si aceptas que suba cualquier cuenta.
+const ALLOWED_EMAILS = ["aronricocl@gmail.com"];
+
 // Nombre de la carpeta (solo se usa como respaldo si NO se define FOLDER_ID).
 const FOLDER_NAME = "Fotos App";
 
@@ -48,6 +60,7 @@ const CAPTURE_QUALITY = 1;
 
 const CONFIG = Object.freeze({
   CLIENT_ID,
+  ALLOWED_EMAILS,
   FOLDER_NAME,
   FOLDER_ID,
   CAPTURE_IDEAL_WIDTH,

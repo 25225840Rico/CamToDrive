@@ -3,12 +3,18 @@
 
   const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
   const DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files";
+  // Devuelve de quien es el token. Se consulta con el scope de Drive que la app ya tiene,
+  // asi que verificar la identidad NO obliga a pedir permisos nuevos ni a reconsentir.
+  const DRIVE_ABOUT_URL =
+    "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)";
   const DRIVE_MULTIPART_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink";
   const DRIVE_RESUMABLE_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,webViewLink";
   // Google documenta uploadType=multipart para archivos pequenos (hasta ~5 MB).
   // Por encima de ese tamano se usa una sesion resumable.
   const MULTIPART_MAX_BYTES = 5 * 1024 * 1024;
   const UPLOAD_ID_PROPERTY = "camtodriveId";
+  // Queda escrito en cada archivo de Drive: permite auditar despues con que cuenta se subio.
+  const OWNER_PROPERTY = "camtodriveOwner";
   const DB_NAME = "camtodrive-db";
   const DB_VERSION = 1;
   const STORE_NAME = "pendingPhotos";
@@ -17,7 +23,10 @@
   const MAX_UPLOAD_ATTEMPTS = 3;
   const RETRY_BASE_DELAY_MS = 1200;
   const QUEUE_RETRY_DELAY_MS = 45 * 1000;
-  const CONSENT_STORAGE_KEY = "camtodrive.consented";
+  // Se recuerda el CORREO verificado, no un booleano. Un booleano global del dispositivo hacia
+  // que, con que UNA cuenta cualquiera hubiera consentido una vez en este telefono, TODAS las
+  // conexiones siguientes fueran silenciosas, de cualquier cuenta. Ese era el agujero.
+  const ACCOUNT_STORAGE_KEY = "camtodrive.account";
   const FRESH_FRAME_TIMEOUT_MS = 400;
 
   const elements = {};
@@ -27,6 +36,12 @@
     tokenExpiresAt: 0,
     tokenExpiryTimer: null,
     gisReady: false,
+    // Identidad del token. Mientras accountVerified sea false la app NO sube nada: un token
+    // sin dueno conocido es exactamente lo que mando 30 fotos al Drive equivocado.
+    accountEmail: null,
+    accountVerified: false,
+    rejectedEmail: "",
+    blockedByOwnerCount: 0,
     isProcessingQueue: false,
     queueProcessRequested: false,
     queueRetryTimer: null,
@@ -101,6 +116,16 @@
       return;
     }
 
+    // Guardarrail: sin FOLDER_ID la app crea una carpeta en el Drive de QUIEN ESTE
+    // CONECTADO. Con una carpeta fija esa via esta cerrada, pero si alguien vacia el valor
+    // el destino vuelve a depender de la sesion. Mejor decirlo que descubrirlo despues.
+    if (!getAppConfig().FOLDER_ID) {
+      console.warn(
+        "CamToDrive: sin FOLDER_ID las fotos van a una carpeta creada en el Drive de la " +
+          "cuenta conectada, no a una carpeta fija."
+      );
+    }
+
     try {
       await waitForGoogleIdentity();
       state.tokenClient = google.accounts.oauth2.initTokenClient({
@@ -137,6 +162,7 @@
     elements.pendingCount = document.getElementById("pendingCount");
     elements.uploadingCount = document.getElementById("uploadingCount");
     elements.networkStatus = document.getElementById("networkStatus");
+    elements.accountChip = document.getElementById("accountChip");
     elements.authHint = document.getElementById("authHint");
 
     elements.preview = document.getElementById("preview");
@@ -160,7 +186,19 @@
   }
 
   function bindEvents() {
-    elements.connectButton.addEventListener("click", requestGoogleToken);
+    // Se envuelve para que el objeto Event del click no llegue como opciones.
+    elements.connectButton.addEventListener("click", () => {
+      // Tras un rechazo hay que forzar el selector: reintentar en silencio devolveria la
+      // misma cuenta equivocada indefinidamente.
+      requestGoogleToken({ forceAccountPicker: Boolean(state.rejectedEmail) });
+    });
+    // Puede no existir si el service worker sirviera un index.html cacheado anterior a este
+    // cambio: la app debe seguir arrancando, no morir en el binding.
+    if (elements.accountChip) {
+      elements.accountChip.addEventListener("click", () => {
+        requestGoogleToken({ forceAccountPicker: true });
+      });
+    }
     elements.captureButton.addEventListener("click", capturePhoto);
     elements.retryCameraButton.addEventListener("click", () => startCamera(true));
     elements.nativeCameraButton.addEventListener("click", openNativeCamera);
@@ -240,16 +278,25 @@
     });
   }
 
-  function requestGoogleToken() {
+  function requestGoogleToken(options = {}) {
     if (!state.tokenClient || !hasConfiguredClientId()) {
       return;
     }
 
+    const forcePicker = Boolean(options.forceAccountPicker);
+    const remembered = getRememberedAccount();
+
     setStatus("Conectar Google");
-    setHint("Esperando autorizacion de Google...");
+    setHint(forcePicker ? "Elige la cuenta correcta..." : "Esperando autorizacion de Google...");
     state.tokenClient.callback = handleTokenResponse;
-    // Tras el primer consentimiento se reconecta en silencio en vez de repetir la pantalla.
-    state.tokenClient.requestAccessToken({ prompt: hasGrantedConsent() ? "" : "consent" });
+
+    // Reconectar en silencio es comodo, pero solo es seguro porque despues se verifica de
+    // quien es el token. Si la cuenta anterior fue rechazada se fuerza el selector: sin esto,
+    // Google reentregaria la misma cuenta equivocada una y otra vez sin mostrar nada.
+    state.tokenClient.requestAccessToken({
+      prompt: forcePicker ? "select_account" : remembered ? "" : "consent",
+      hint: forcePicker ? "" : remembered || "",
+    });
   }
 
   async function handleTokenResponse(response) {
@@ -265,26 +312,97 @@
     const expiresInMs = Math.max(0, Number(response.expires_in || 3600) * 1000 - TOKEN_SAFETY_MS);
     state.accessToken = response.access_token;
     state.tokenExpiresAt = Date.now() + expiresInMs;
+
+    // PUERTA DE IDENTIDAD. Hasta aqui solo hay un token; todavia no se sabe de quien es.
+    // Nada puede subirse antes de responder esa pregunta.
+    let account = null;
+    try {
+      account = await fetchAccountIdentity();
+    } catch (error) {
+      console.error(error);
+      clearAuth(false);
+      setStatus("No se pudo verificar la cuenta", "error");
+      setHint("Google no confirmo con que cuenta entraste. Conecta otra vez.");
+      updateControls();
+      return;
+    }
+
+    const email = (account && account.emailAddress) || "";
+
+    if (!isAllowedAccount(email)) {
+      clearAuth(false);
+      state.rejectedEmail = email || "desconocida";
+      setStatus("Cuenta equivocada", "error");
+      setHint(
+        `Entraste como ${state.rejectedEmail}. Las fotos irian a SU Drive, no al tuyo. ` +
+          "Toca Cambiar de cuenta."
+      );
+      updateControls();
+      return;
+    }
+
+    state.accountEmail = email;
+    state.accountVerified = true;
+    state.rejectedEmail = "";
     scheduleTokenExpiry(expiresInMs);
-    rememberConsent();
+    rememberAccount(email);
+
+    // Fotos encoladas antes de que existiera esta verificacion: se adoptan ahora que hay una
+    // cuenta autorizada confirmada, en vez de quedar bloqueadas para siempre.
+    await adoptOrphanQueuePhotos(email);
 
     setStatus(state.pendingCount > 0 ? "Subiendo cola..." : "Camara lista", "ok");
-    setHint("Conectado a Google Drive con el scope Drive completo.");
+    setHint(`Conectado como ${email}.`);
     updateControls();
     await processPendingQueue();
   }
 
-  function hasGrantedConsent() {
+  // Se consulta con fetch directo y no con authorizedFetch: authorizedFetch exige una sesion
+  // ya verificada, y esta es justamente la llamada que produce esa verificacion.
+  async function fetchAccountIdentity() {
+    const response = await fetch(DRIVE_ABOUT_URL, {
+      headers: { Authorization: `Bearer ${state.accessToken}` },
+    });
+
+    if (!response.ok) {
+      throw new Error(await getResponseMessage(response));
+    }
+
+    const data = await response.json();
+    return data && data.user ? data.user : null;
+  }
+
+  function getAllowedEmails() {
+    const list = getAppConfig().ALLOWED_EMAILS;
+    return Array.isArray(list) ? list.filter(Boolean).map((value) => normalizeEmail(value)) : [];
+  }
+
+  function normalizeEmail(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function isAllowedAccount(email) {
+    const allowed = getAllowedEmails();
+    // Lista vacia = el dueno acepta explicitamente cualquier cuenta (ver config.js).
+    if (allowed.length === 0) {
+      return Boolean(email);
+    }
+    return allowed.includes(normalizeEmail(email));
+  }
+
+  function getRememberedAccount() {
     try {
-      return localStorage.getItem(CONSENT_STORAGE_KEY) === "1";
+      const stored = normalizeEmail(localStorage.getItem(ACCOUNT_STORAGE_KEY));
+      // Si el correo recordado ya no esta autorizado, no sirve como pista.
+      return stored && isAllowedAccount(stored) ? stored : "";
     } catch (_error) {
-      return false;
+      return "";
     }
   }
 
-  function rememberConsent() {
+  function rememberAccount(email) {
     try {
-      localStorage.setItem(CONSENT_STORAGE_KEY, "1");
+      localStorage.setItem(ACCOUNT_STORAGE_KEY, normalizeEmail(email));
     } catch (_error) {
       // Modo privado: se volvera a pedir el consentimiento, no es un fallo grave.
     }
@@ -311,6 +429,8 @@
   function clearAuth(shouldUpdateControls = true) {
     state.accessToken = null;
     state.tokenExpiresAt = 0;
+    state.accountEmail = null;
+    state.accountVerified = false;
     if (state.tokenExpiryTimer) {
       window.clearTimeout(state.tokenExpiryTimer);
       state.tokenExpiryTimer = null;
@@ -320,8 +440,12 @@
     }
   }
 
+  // accountVerified es parte de la condicion, no un adorno: un token cuya cuenta no se
+  // confirmo NO habilita ninguna subida.
   function isAuthenticated() {
-    return Boolean(state.accessToken && Date.now() < state.tokenExpiresAt);
+    return Boolean(
+      state.accessToken && state.accountVerified && Date.now() < state.tokenExpiresAt
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1351,6 +1475,9 @@
     if (status === "error") {
       return "!";
     }
+    if (status === "blocked") {
+      return "🔒";
+    }
     return "···";
   }
 
@@ -1363,7 +1490,12 @@
       return "Subida a Drive";
     }
     if (status === "error") {
-      return "Pendiente de reintento";
+      return photo.errorMessage || "Pendiente de reintento";
+    }
+    if (status === "blocked") {
+      return photo.ownerEmail
+        ? `Retenida: la tomo ${photo.ownerEmail}`
+        : "Retenida: la tomo otra cuenta";
     }
     return "En cola";
   }
@@ -1604,12 +1736,37 @@
     return uploadMultipart(folderId, blob, fileName, uploadId, onProgress);
   }
 
+  // Adopta las fotos que quedaron sin dueno (encoladas por versiones anteriores de la app, o
+  // tomadas antes de conectar). Solo se llama con una cuenta ya verificada y autorizada.
+  async function adoptOrphanQueuePhotos(email) {
+    if (!email) {
+      return;
+    }
+
+    try {
+      const ids = await getPendingPhotoIds();
+      for (const id of ids) {
+        const photo = await getPendingPhoto(id);
+        if (photo && !photo.ownerEmail) {
+          photo.ownerEmail = email;
+          await updatePendingPhoto(photo);
+        }
+      }
+    } catch (error) {
+      // No es critico: sin adopcion las fotos siguen en cola, solo que sin subir.
+      console.debug("No se pudieron adoptar las fotos sin cuenta.", error);
+    }
+  }
+
   function buildFileMetadata(folderId, blob, fileName, uploadId) {
     const metadata = {
       name: fileName,
       parents: [folderId],
       appProperties: {
         [UPLOAD_ID_PROPERTY]: uploadId,
+        // Deja rastro de la cuenta que subio el archivo. Si el propietario en Drive no
+        // coincide con esto, se sabe exactamente donde miro el fallo.
+        [OWNER_PROPERTY]: state.accountEmail || "",
       },
     };
     if (blob.type) {
@@ -1876,6 +2033,17 @@
     const fallback = `Google Drive respondio con HTTP ${response.status}.`;
     try {
       const data = await response.clone().json();
+      if (data.error) {
+        const reasons = (data.error.errors || []).map((item) => item.reason);
+        // Sin traducir, este error llega como un texto generico y el sintoma parece "las
+        // fotos no suben". La causa real es que la cuenta se quedo sin espacio.
+        if (reasons.includes("storageQuotaExceeded")) {
+          return "El Drive de esta cuenta esta lleno. Libera espacio y reintenta.";
+        }
+        if (reasons.includes("insufficientFilePermissions") || response.status === 403) {
+          return "Esta cuenta no tiene permiso para escribir en la carpeta de destino.";
+        }
+      }
       return data.error && data.error.message ? data.error.message : fallback;
     } catch (_error) {
       try {
@@ -1917,6 +2085,10 @@
     let uploadedCount = 0;
     let failedCount = 0;
     let authFailed = false;
+    // El motivo real del ultimo fallo. Sin esto, "Drive lleno" y "sin permiso" se ven
+    // igual que un corte de red: como un reintento eterno que nadie sabe por que no avanza.
+    let lastFailureMessage = "";
+    state.blockedByOwnerCount = 0;
 
     try {
       // Solo se cargan las claves: cada blob se lee justo antes de subirlo para no
@@ -1943,6 +2115,21 @@
             continue;
           }
 
+          // Una foto solo se sube con la cuenta que la tomo. Las ajenas quedan en cola
+          // esperando a su dueno en vez de irse al Drive de quien este conectado ahora.
+          if (photo.ownerEmail && normalizeEmail(photo.ownerEmail) !== normalizeEmail(state.accountEmail)) {
+            state.blockedByOwnerCount += 1;
+            // La foto sigue existiendo y sigue ocupando espacio: tiene que verse. Si solo se
+            // saltara, desapareceria de la tira al recargar y el usuario no sabria que la retiene.
+            ensureRecentPhoto(photo);
+            updateRecentPhoto(photo.id, {
+              status: "blocked",
+              progress: null,
+              ownerEmail: photo.ownerEmail,
+            });
+            continue;
+          }
+
           ensureRecentPhoto(photo);
           setPhotoUploadProgress(photo.id, 0, 0);
           state.uploadingCount += 1;
@@ -1963,15 +2150,18 @@
             await refreshPendingCount();
           } catch (error) {
             console.error(error);
+            const motivo = error && error.message ? String(error.message) : "";
             if (error instanceof AuthExpiredError) {
               authFailed = true;
               clearAuth(false);
             } else {
               failedCount += 1;
+              lastFailureMessage = motivo;
             }
             updateRecentPhoto(photo.id, {
               status: "error",
               progress: null,
+              errorMessage: motivo,
             });
           } finally {
             clearPhotoUploadProgress(photo.id);
@@ -1992,8 +2182,19 @@
         setHint("Sin conexion: se reintentara automaticamente.");
       } else if (failedCount > 0) {
         setQueuedStatus();
-        setHint("Hay pendientes; se reintentara solo en menos de un minuto.");
+        setHint(
+          lastFailureMessage
+            ? `${lastFailureMessage} Se reintentara solo en menos de un minuto.`
+            : "Hay pendientes; se reintentara solo en menos de un minuto."
+        );
         scheduleQueueRetry();
+      } else if (state.blockedByOwnerCount > 0) {
+        setQueuedStatus();
+        const n = state.blockedByOwnerCount;
+        setHint(
+          `${n} ${n === 1 ? "foto pertenece" : "fotos pertenecen"} a otra cuenta y no se ` +
+            "subiran con esta. Conectate con la cuenta que las tomo."
+        );
       } else if (uploadedCount > 0) {
         setStatus("Fotos subidas", "ok");
         setHint("Las fotos pendientes quedaron guardadas en Google Drive.");
@@ -2133,6 +2334,9 @@
         originalName: file.name || "",
         uploadId: makeUploadId(),
         createdAt: Date.now(),
+        // Cada foto recuerda con que cuenta se tomo. Sin esto, una cola creada por una
+        // persona podia terminar subiendose entera con el token de otra al reconectar.
+        ownerEmail: state.accountEmail || null,
       });
 
       request.onsuccess = () => {
@@ -2304,12 +2508,62 @@
 
     elements.connectButton.disabled = !configured || !state.gisReady;
     elements.connectButton.hidden = authenticated;
+    // El boton nombra lo que va a pasar: reintentar en silencio tras un rechazo no sirve.
+    const connectLabel = elements.connectButton.querySelector("span:last-child");
+    if (connectLabel) {
+      connectLabel.textContent = state.rejectedEmail ? "Cambiar de cuenta" : "Conectar Google";
+    }
+    updateAccountChip(authenticated);
     elements.captureButton.disabled =
       state.captureInProgress || state.camera.starting || state.preview.open;
     elements.captureButton.classList.toggle("paused", state.camera.suspended);
-    elements.pendingCount.textContent = String(state.pendingCount);
+    // Si hay fotos retenidas por ser de otra cuenta, el total a secas mentiria: parte de
+    // esas fotos no va a subir por mucho que se espere. Se muestran aparte.
+    elements.pendingCount.textContent =
+      state.blockedByOwnerCount > 0
+        ? `${state.pendingCount} (${state.blockedByOwnerCount}🔒)`
+        : String(state.pendingCount);
     elements.uploadingCount.textContent = String(state.uploadingCount);
     elements.authHint.textContent = state.authHintMessage || getDefaultHint(configured, authenticated);
+  }
+
+  // El chip de cuenta es la pieza central del arreglo: convierte un fallo que era
+  // completamente invisible en algo que se ve sin buscarlo.
+  function updateAccountChip(authenticated) {
+    const chip = elements.accountChip;
+    if (!chip) {
+      return;
+    }
+
+    chip.classList.remove("ok", "error");
+
+    if (state.rejectedEmail) {
+      chip.hidden = false;
+      chip.textContent = `⚠ ${state.rejectedEmail}`;
+      chip.classList.add("error");
+      chip.setAttribute(
+        "aria-label",
+        `Cuenta no autorizada: ${state.rejectedEmail}. Toca para cambiar de cuenta.`
+      );
+      chip.title = "Cuenta no autorizada. Toca para cambiar de cuenta.";
+      return;
+    }
+
+    if (authenticated && state.accountEmail) {
+      chip.hidden = false;
+      chip.textContent = state.accountEmail;
+      chip.classList.add("ok");
+      chip.setAttribute(
+        "aria-label",
+        `Subiendo como ${state.accountEmail}. Toca para cambiar de cuenta.`
+      );
+      chip.title = "Toca para cambiar de cuenta.";
+      return;
+    }
+
+    chip.hidden = true;
+    chip.removeAttribute("aria-label");
+    chip.removeAttribute("title");
   }
 
   function getDefaultHint(configured, authenticated) {

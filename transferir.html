@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#070b18">
+    <meta name="robots" content="noindex, nofollow">
     <title>Transferir propiedad — CamToDrive</title>
     <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -51,6 +52,8 @@
         background: rgba(251, 191, 36, 0.09);
       }
 
+      .panel.final { border-color: rgba(248, 113, 113, 0.4); }
+
       button {
         font: inherit;
         font-weight: 600;
@@ -92,6 +95,14 @@
       }
 
       input:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+      input[aria-invalid="true"] { border-color: var(--error); }
+
+      .error-campo {
+        color: var(--error);
+        font-size: 13px;
+        margin: 6px 0 0;
+        min-height: 1px;
+      }
 
       .fila { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
       .acciones { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
@@ -119,7 +130,8 @@
         line-height: 1.6;
       }
 
-      #registro p { margin: 0 0 2px; }
+      /* Un nombre de archivo largo no debe quedar atrapado tras un scroll horizontal. */
+      #registro p { margin: 0 0 2px; overflow-wrap: anywhere; }
       .r-ok { color: var(--ok); }
       .r-mal { color: var(--error); }
       .r-info { color: var(--tinta-suave); }
@@ -147,9 +159,13 @@
           en la misma carpeta. Sólo cambia quién es su dueño, y con ello a qué cuenta se le cobra
           el espacio. <strong>No hace falta borrar nada.</strong>
         </p>
+        <p>
+          Es una herramienta de un solo uso. Cuando termines, conviene retirarla de la web
+          publicada.
+        </p>
       </div>
 
-      <!-- ESTADO: conexión -->
+      <!-- PASO 1: conexión -->
       <section class="panel" aria-labelledby="t-conexion">
         <h2 id="t-conexion" style="margin-top:0">1. Conecta la cuenta que tiene los archivos</h2>
         <p id="estadoConexion" role="status" aria-live="polite">Cargando Google…</p>
@@ -159,12 +175,12 @@
         </div>
       </section>
 
-      <!-- ESTADO: análisis -->
+      <!-- PASO 2: inventario -->
       <section class="panel oculto" id="panelAnalisis" aria-labelledby="t-analisis">
         <h2 id="t-analisis" style="margin-top:0">2. Revisa qué hay</h2>
         <div class="fila">
           <div>
-            <label for="fechaDesde">Sólo archivos creados desde</label>
+            <label for="fechaDesde">Sólo archivos creados desde (déjalo vacío para verlo todo)</label>
             <input type="date" id="fechaDesde" value="2026-07-31">
           </div>
           <button id="btnAnalizar" type="button" class="primario">Analizar carpeta</button>
@@ -174,35 +190,56 @@
         <div class="tabla-scroll"><table id="tabla" class="oculto"></table></div>
       </section>
 
-      <!-- ESTADO: transferencia -->
+      <!-- PASO 3: transferencia -->
       <section class="panel oculto" id="panelTransferir" aria-labelledby="t-transferir">
         <h2 id="t-transferir" style="margin-top:0">3. Transfiere</h2>
         <div class="fila">
           <div>
             <label for="destino">Cuenta que debe quedar como propietaria</label>
-            <input type="email" id="destino" placeholder="correo@gmail.com">
+            <input
+              type="email"
+              id="destino"
+              placeholder="correo@gmail.com"
+              autocomplete="email"
+              inputmode="email"
+              spellcheck="false"
+              aria-describedby="destinoError"
+            >
+            <p class="error-campo" id="destinoError" role="alert"></p>
           </div>
         </div>
         <div class="acciones">
           <button id="btnProbar" type="button">Probar con 1 archivo</button>
           <button id="btnTransferir" type="button" class="peligro">Transferir todos</button>
+          <button id="btnDetener" type="button" class="oculto">Detener</button>
         </div>
         <p class="sub" style="margin:12px 0 0; font-size:13px">
           Empieza por el archivo de prueba. Google trata de forma distinta las cuentas normales y
           las de empresa: si la prueba funciona, el lote completo funcionará igual.
         </p>
         <div id="progresoCaja" class="oculto" style="margin-top:16px">
-          <div class="barra"><span id="barra"></span></div>
+          <div
+            class="barra"
+            id="barraCaja"
+            role="progressbar"
+            aria-label="Progreso de la transferencia"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+          >
+            <span id="barra"></span>
+          </div>
           <p id="progresoTexto" role="status" aria-live="polite" style="font-size:13px"></p>
         </div>
       </section>
 
-      <!-- ESTADO: salida de la carpeta -->
-      <section class="panel oculto" id="panelSalir" aria-labelledby="t-salir">
+      <!-- PASO 4: salida de la carpeta -->
+      <section class="panel final oculto" id="panelSalir" aria-labelledby="t-salir">
         <h2 id="t-salir" style="margin-top:0">4. Sacar esta cuenta de la carpeta</h2>
         <p>
           Cuando ya no quede ningún archivo tuyo dentro, este botón quita tu acceso a la carpeta:
           desaparece de tu Drive y no vuelve a subir nada aquí por accidente.
+          <strong>Este paso no se puede deshacer desde aquí.</strong>
         </p>
         <p id="estadoSalir" role="status" aria-live="polite"></p>
         <div class="acciones">
@@ -211,10 +248,13 @@
         </div>
       </section>
 
-      <!-- ESTADO: registro -->
+      <!-- Registro -->
       <section class="panel oculto" id="panelRegistro" aria-labelledby="t-registro">
         <h2 id="t-registro" style="margin-top:0">Registro</h2>
-        <div id="registro" role="log" aria-live="polite"></div>
+        <div id="registro" role="log" aria-live="off"></div>
+        <div class="acciones">
+          <button id="btnDescargar" type="button">Descargar el registro</button>
+        </div>
       </section>
     </main>
 
@@ -225,17 +265,38 @@
         var SCOPE = "https://www.googleapis.com/auth/drive";
         var FILES = "https://www.googleapis.com/drive/v3/files";
         var ABOUT = "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress),storageQuota";
+        var CARPETA_MIME = "application/vnd.google-apps.folder";
+        // Una comprobacion de "no queda nada mio" caduca: Drive puede cambiar por debajo.
+        var VALIDEZ_COMPROBACION_MS = 120000;
 
         var el = {};
-        var estado = { token: null, email: "", cliente: null, archivos: [], mios: [] };
+        var estado = null;
+
+        function estadoLimpio() {
+          return {
+            token: null,
+            email: "",
+            cliente: estado ? estado.cliente : null,
+            mios: [],
+            // Con que cuenta se hizo el analisis. Si cambia la sesion, el lote deja de valer:
+            // esta herramienta existe porque una sesion equivocada hizo justo eso.
+            analizadoCon: "",
+            invitados: {},
+            salidaSello: 0,
+            cancelado: false,
+            enLote: false,
+          };
+        }
 
         document.addEventListener("DOMContentLoaded", function () {
+          estado = estadoLimpio();
+
           [
             "estadoConexion", "btnConectar", "btnCambiar", "panelAnalisis", "fechaDesde",
             "btnAnalizar", "estadoAnalisis", "resumen", "tabla", "panelTransferir", "destino",
-            "btnProbar", "btnTransferir", "progresoCaja", "barra", "progresoTexto",
-            "panelSalir", "estadoSalir", "btnComprobar", "btnSalir",
-            "panelRegistro", "registro",
+            "destinoError", "btnProbar", "btnTransferir", "btnDetener", "progresoCaja",
+            "barraCaja", "barra", "progresoTexto", "panelSalir", "estadoSalir", "btnComprobar",
+            "btnSalir", "panelRegistro", "registro", "btnDescargar",
           ].forEach(function (id) { el[id] = document.getElementById(id); });
 
           el.btnConectar.addEventListener("click", pedirToken);
@@ -243,8 +304,23 @@
           el.btnAnalizar.addEventListener("click", analizar);
           el.btnProbar.addEventListener("click", function () { transferir(true); });
           el.btnTransferir.addEventListener("click", function () { transferir(false); });
+          el.btnDetener.addEventListener("click", function () {
+            estado.cancelado = true;
+            el.btnDetener.disabled = true;
+            log("Detención pedida: se para al terminar el archivo en curso.", "info");
+          });
           el.btnComprobar.addEventListener("click", comprobarSalida);
           el.btnSalir.addEventListener("click", salirDeLaCarpeta);
+          el.btnDescargar.addEventListener("click", descargarRegistro);
+          el.destino.addEventListener("input", function () { marcarErrorDestino(""); });
+
+          // Cerrar la pestana a mitad de un lote pierde el registro de que se transfirio.
+          window.addEventListener("beforeunload", function (e) {
+            if (estado.enLote) {
+              e.preventDefault();
+              e.returnValue = "";
+            }
+          });
 
           var cfg = config();
           if (Array.isArray(cfg.ALLOWED_EMAILS) && cfg.ALLOWED_EMAILS[0]) {
@@ -288,17 +364,45 @@
           }, 250);
         }
 
-        function pedirToken(forzarSelector) {
+        // Borra TODO rastro de la sesion anterior. Se llama de forma sincrona al pedir token,
+        // no cuando Google responde: si no, entre la peticion y la respuesta quedan a la vista
+        // botones armados con los archivos de la cuenta anterior.
+        function reiniciarSesion() {
+          var cliente = estado.cliente;
+          estado = estadoLimpio();
+          estado.cliente = cliente;
+
+          el.panelAnalisis.classList.add("oculto");
+          el.panelTransferir.classList.add("oculto");
+          el.panelSalir.classList.add("oculto");
+          el.progresoCaja.classList.add("oculto");
+          el.tabla.classList.add("oculto");
+          el.btnDetener.classList.add("oculto");
+          el.btnSalir.disabled = true;
+          el.btnProbar.disabled = false;
+          el.btnTransferir.disabled = false;
+          el.btnAnalizar.disabled = false;
+          el.btnComprobar.disabled = false;
+          el.resumen.replaceChildren();
+          el.tabla.replaceChildren();
+          el.estadoAnalisis.textContent = "";
+          el.estadoSalir.textContent = "";
+          marcarErrorDestino("");
+        }
+
+        function pedirToken() {
           if (!estado.cliente) return;
+          reiniciarSesion();
           el.estadoConexion.textContent = "Esperando a Google…";
-          // Siempre con selector explícito: esta herramienta existe justamente porque una
-          // reconexión silenciosa mandó archivos a la cuenta equivocada.
+          // Siempre con selector explicito: esta herramienta existe justamente porque una
+          // reconexion silenciosa mando archivos a la cuenta equivocada.
           estado.cliente.requestAccessToken({ prompt: "select_account" });
         }
 
         function recibirToken(respuesta) {
           if (!respuesta || respuesta.error) {
-            el.estadoConexion.innerHTML = '<span class="cuenta error">No se completó la conexión.</span>';
+            el.estadoConexion.innerHTML =
+              '<span class="cuenta error">No se completó la conexión.</span>';
             return;
           }
           estado.token = respuesta.access_token;
@@ -315,23 +419,20 @@
             .then(function (d) {
               estado.email = (d.user && d.user.emailAddress) || "";
               var q = d.storageQuota || {};
-              var uso = "";
-              if (q.limit) {
-                uso = " · " + tam(q.usage) + " de " + tam(q.limit) + " usados";
-              }
+              var uso = q.limit ? " · " + tam(q.usage) + " de " + tam(q.limit) + " usados" : "";
               el.estadoConexion.innerHTML =
                 'Conectado como <span class="cuenta ok">' + txt(estado.email) + "</span>" + txt(uso);
               el.btnCambiar.classList.remove("oculto");
               el.panelAnalisis.classList.remove("oculto");
               el.panelSalir.classList.remove("oculto");
-              el.btnSalir.disabled = true;
-              el.estadoSalir.textContent = "";
               log("Sesión verificada: " + estado.email, "info");
             })
             .catch(function (e) {
               estado.token = null;
+              estado.email = "";
               el.estadoConexion.innerHTML =
-                '<span class="cuenta error">No se pudo verificar la cuenta.</span> ' + txt(e.message);
+                '<span class="cuenta error">No se pudo verificar la cuenta.</span> ' +
+                txt(mensajeDe(e));
             });
         }
 
@@ -343,59 +444,111 @@
           return fetch(url, Object.assign({}, opciones, { headers: h }));
         }
 
+        // Traduce lo que devuelve Drive. Sin esto el usuario ve "storageQuotaExceeded" o un
+        // "Failed to fetch" en ingles justo en el momento en que necesita entender que pasa.
         function errorDe(r) {
           return r.json().then(
-            function (d) { return (d.error && d.error.message) || "HTTP " + r.status; },
-            function () { return "HTTP " + r.status; }
+            function (d) { return traducir(d && d.error, r.status); },
+            function () { return traducir(null, r.status); }
           );
         }
 
-        function analizar() {
-          el.btnAnalizar.disabled = true;
-          el.estadoAnalisis.textContent = "Leyendo la carpeta…";
-          el.resumen.innerHTML = "";
-          el.tabla.classList.add("oculto");
-          estado.archivos = [];
+        function traducir(error, status) {
+          var razon = "";
+          if (error && Array.isArray(error.errors) && error.errors[0]) {
+            razon = error.errors[0].reason || "";
+          }
+          if (status === 401) return "Tu sesión de Google expiró.";
+          if (razon === "storageQuotaExceeded") {
+            return "La cuenta que recibe no tiene espacio libre en su Drive.";
+          }
+          if (razon === "insufficientFilePermissions" || status === 403) {
+            return "Esta cuenta no tiene permiso para hacer eso en Drive.";
+          }
+          if (razon === "userRateLimitExceeded" || razon === "rateLimitExceeded" || status === 429) {
+            return "Google está limitando las peticiones. Espera un momento.";
+          }
+          if (status === 404) return "No se encontró la carpeta o el archivo.";
+          return (error && error.message) || "Error de Drive (HTTP " + status + ")";
+        }
 
-          leerPagina(null)
-            .then(function () {
+        function mensajeDe(e) {
+          var m = (e && e.message) || "";
+          if (!navigator.onLine || m === "Failed to fetch" || /NetworkError/i.test(m)) {
+            return "Sin conexión: revisa la red y vuelve a intentarlo.";
+          }
+          return m || "Error desconocido.";
+        }
+
+        // Lee la carpeta y DEVUELVE la lista. No toca estado compartido: dos lecturas
+        // simultaneas se pisaban y podian habilitar la salida con la carpeta llena.
+        function leerCarpeta(opciones) {
+          opciones = opciones || {};
+          var acumulado = [];
+
+          function pagina(pageToken) {
+            var p = new URLSearchParams({
+              q: "'" + config().FOLDER_ID + "' in parents and trashed=" +
+                (opciones.papelera ? "true" : "false"),
+              fields:
+                "nextPageToken,files(id,name,size,mimeType,createdTime,ownedByMe," +
+                "owners(emailAddress))",
+              pageSize: "1000",
+            });
+            if (pageToken) p.set("pageToken", pageToken);
+
+            return api(FILES + "?" + p.toString())
+              .then(function (r) {
+                if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
+                return r.json();
+              })
+              .then(function (d) {
+                acumulado = acumulado.concat(d.files || []);
+                if (typeof opciones.avance === "function") opciones.avance(acumulado.length);
+                if (d.nextPageToken) return pagina(d.nextPageToken);
+                return acumulado;
+              });
+          }
+
+          return pagina(null);
+        }
+
+        function bloquearLecturas(bloquear) {
+          el.btnAnalizar.disabled = bloquear;
+          el.btnComprobar.disabled = bloquear;
+        }
+
+        // ---- Paso 2: inventario de solo lectura --------------------------------------
+        function analizar() {
+          bloquearLecturas(true);
+          el.estadoAnalisis.textContent = "Leyendo la carpeta…";
+          el.resumen.replaceChildren();
+          el.tabla.classList.add("oculto");
+          var sesion = estado.email;
+
+          leerCarpeta({
+            avance: function (n) { el.estadoAnalisis.textContent = "Leídos " + n + " archivos…"; },
+          })
+            .then(function (todos) {
+              if (sesion !== estado.email) return;  // cambio de cuenta a mitad: se descarta
               var desde = el.fechaDesde.value ? new Date(el.fechaDesde.value + "T00:00:00") : null;
-              var lista = estado.archivos.filter(function (f) {
+              var lista = todos.filter(function (f) {
                 return !desde || new Date(f.createdTime) >= desde;
               });
               estado.mios = lista.filter(function (f) { return f.ownedByMe; });
-              pintar(lista);
+              estado.analizadoCon = estado.email;
+              pintar(lista, todos);
             })
             .catch(function (e) {
-              el.estadoAnalisis.textContent = "Error al leer la carpeta: " + e.message;
+              el.estadoAnalisis.textContent = "Error al leer la carpeta: " + mensajeDe(e);
             })
-            .then(function () { el.btnAnalizar.disabled = false; });
+            .then(function () { bloquearLecturas(false); });
         }
 
-        function leerPagina(pageToken) {
-          var p = new URLSearchParams({
-            q: "'" + config().FOLDER_ID + "' in parents and trashed=false",
-            fields: "nextPageToken,files(id,name,size,createdTime,ownedByMe,owners(emailAddress))",
-            pageSize: "1000",
-          });
-          if (pageToken) p.set("pageToken", pageToken);
-
-          return api(FILES + "?" + p.toString())
-            .then(function (r) {
-              if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
-              return r.json();
-            })
-            .then(function (d) {
-              estado.archivos = estado.archivos.concat(d.files || []);
-              el.estadoAnalisis.textContent = "Leídos " + estado.archivos.length + " archivos…";
-              if (d.nextPageToken) return leerPagina(d.nextPageToken);
-            });
-        }
-
-        function pintar(lista) {
+        function pintar(lista, todos) {
           if (lista.length === 0) {
             el.estadoAnalisis.textContent =
-              "No hay archivos en ese rango de fechas. Prueba con una fecha anterior.";
+              "No hay archivos en ese rango de fechas. Prueba con una fecha anterior o borra la fecha.";
             el.panelTransferir.classList.add("oculto");
             return;
           }
@@ -424,98 +577,163 @@
           if (estado.mios.length === 0) {
             el.estadoAnalisis.textContent =
               "Ningún archivo de este rango pertenece a " + estado.email +
-              ", así que no hay nada que esta sesión pueda transferir. " +
-              "¿Conectaste la cuenta correcta?";
+              ", así que no hay nada que esta sesión pueda transferir. ¿Conectaste la cuenta correcta?";
             el.panelTransferir.classList.add("oculto");
             el.tabla.classList.add("oculto");
             return;
           }
 
-          el.estadoAnalisis.textContent =
-            estado.mios.length + " archivos (" + tam(bytesMios) + ") pertenecen a " +
+          var texto = estado.mios.length + " archivos (" + tam(bytesMios) + ") pertenecen a " +
             estado.email + " y pueden transferirse.";
 
           // Si el filtro de fecha deja fuera archivos propios, decirlo: el objetivo es que
           // esta cuenta no aloje nada, y un rango corto lo dejaria a medias sin avisar.
-          var todosMios = estado.archivos.filter(function (f) { return f.ownedByMe; });
+          var todosMios = todos.filter(function (f) { return f.ownedByMe; });
           if (todosMios.length > estado.mios.length) {
-            var fuera = todosMios.length - estado.mios.length;
-            el.estadoAnalisis.textContent +=
-              " Ojo: hay " + fuera + " archivos tuyos más antiguos que la fecha del filtro. " +
-              "Borra la fecha para incluirlos todos.";
+            texto += " Ojo: hay " + (todosMios.length - estado.mios.length) +
+              " archivos tuyos fuera del filtro de fecha. Borra la fecha para incluirlos todos.";
           }
 
-          var t = "<tr><th>Archivo</th><th>Creado</th><th class='num'>Peso</th></tr>";
+          var pendientes = estado.mios.filter(function (f) { return estado.invitados[f.id]; });
+          if (pendientes.length > 0) {
+            texto += " De ellos, " + pendientes.length + " ya tienen invitación enviada y sólo " +
+              "esperan a que la acepten: no hace falta volver a transferirlos.";
+          }
+          el.estadoAnalisis.textContent = texto;
+
+          var t = "<tr><th>Archivo</th><th>Creado</th><th class='num'>Peso</th><th>Estado</th></tr>";
           estado.mios.slice(0, 200).forEach(function (f) {
             t += "<tr class='mia'><td>" + txt(f.name) + "</td><td>" +
               txt(String(f.createdTime).slice(0, 10)) + "</td><td class='num'>" +
-              tam(f.size) + "</td></tr>";
+              tam(f.size) + "</td><td>" +
+              (estado.invitados[f.id] ? "Invitación enviada" : "Por transferir") + "</td></tr>";
           });
           if (estado.mios.length > 200) {
-            t += "<tr><td colspan='3'>… y " + (estado.mios.length - 200) + " más</td></tr>";
+            t += "<tr><td colspan='4'>… y " + (estado.mios.length - 200) + " más</td></tr>";
           }
           el.tabla.innerHTML = t;
           el.tabla.classList.remove("oculto");
           el.panelTransferir.classList.remove("oculto");
         }
 
+        // ---- Paso 3: transferencia ----------------------------------------------------
+        function marcarErrorDestino(mensaje) {
+          el.destinoError.textContent = mensaje;
+          if (mensaje) {
+            el.destino.setAttribute("aria-invalid", "true");
+          } else {
+            el.destino.removeAttribute("aria-invalid");
+          }
+        }
+
         function transferir(soloUno) {
           var destino = (el.destino.value || "").trim();
-          if (!destino || destino.indexOf("@") === -1) {
-            alerta("Escribe el correo de la cuenta que debe quedar como propietaria.");
+
+          if (!/^[^\s@]+@[^\s@.]+\.[^\s@]{2,}$/.test(destino)) {
+            marcarErrorDestino("Escribe un correo completo, por ejemplo nombre@gmail.com.");
+            el.destino.focus();
             return;
           }
           if (destino.toLowerCase() === (estado.email || "").toLowerCase()) {
-            alerta("Ese es el correo de la sesión actual: los archivos ya le pertenecen.");
+            marcarErrorDestino("Ese es el correo de esta sesión: los archivos ya le pertenecen.");
+            el.destino.focus();
+            return;
+          }
+          marcarErrorDestino("");
+
+          // El lote se armo con una cuenta; si la sesion ya es otra, no vale.
+          if (estado.analizadoCon !== estado.email) {
+            el.estadoAnalisis.textContent =
+              "La sesión cambió desde el último análisis. Vuelve a analizar la carpeta antes de transferir.";
+            el.panelTransferir.classList.add("oculto");
             return;
           }
 
-          var lote = soloUno ? estado.mios.slice(0, 1) : estado.mios.slice();
+          var candidatos = estado.mios.filter(function (f) { return !estado.invitados[f.id]; });
+          if (candidatos.length === 0) {
+            candidatos = estado.mios.slice();
+            if (candidatos.length > 0 && !window.confirm(
+              "Todos estos archivos ya tienen una invitación enviada. Si continúas se enviarán " +
+              "invitaciones duplicadas. ¿Continuar de todos modos?"
+            )) return;
+          }
+
+          var lote = soloUno ? candidatos.slice(0, 1) : candidatos.slice();
           if (lote.length === 0) return;
 
-          if (!soloUno) {
-            var ok = window.confirm(
-              "Se cederá la propiedad de " + lote.length + " archivos a " + destino + ".\n\n" +
-              "Los archivos NO se mueven ni se borran. ¿Continuar?"
-            );
-            if (!ok) return;
-          }
+          if (!soloUno && !window.confirm(
+            "Se cederá la propiedad de " + lote.length + " archivos.\n\n" +
+            "De:   " + estado.email + "\n" +
+            "Para: " + destino + "\n\n" +
+            "Los archivos NO se mueven ni se borran. ¿Continuar?"
+          )) return;
 
           el.btnProbar.disabled = true;
           el.btnTransferir.disabled = true;
+          bloquearLecturas(true);
+          el.btnDetener.classList.remove("oculto");
+          el.btnDetener.disabled = false;
           el.progresoCaja.classList.remove("oculto");
           el.panelRegistro.classList.remove("oculto");
+          estado.cancelado = false;
+          estado.enLote = true;
+          // Cualquier cosa que se transfiera invalida la comprobacion de salida.
+          estado.salidaSello = 0;
+          el.btnSalir.disabled = true;
+
           log("--- " + (soloUno ? "Prueba con 1 archivo" : "Transferencia de " + lote.length) +
             " hacia " + destino + " ---", "info");
 
-          var hechos = 0, fallos = 0, i = 0;
+          var hechos = 0, fallos = 0, i = 0, sesionCaida = false, limitado = false;
+          var sesion = estado.email;
 
           function siguiente() {
-            if (i >= lote.length) return terminar();
+            if (estado.cancelado || sesionCaida || i >= lote.length) return terminar();
+            if (sesion !== estado.email) { sesionCaida = true; return terminar(); }
+
             var f = lote[i++];
             return cederUno(f.id, destino)
               .then(function (r) {
+                if (r.sesionExpirada) {
+                  sesionCaida = true;
+                  return;
+                }
                 if (r.ok) {
                   hechos++;
-                  log("OK   " + f.name + "  (" + r.via + ")", "ok");
+                  if (r.pendiente) estado.invitados[f.id] = true;
+                  log("OK    " + f.name + "  (" + r.via + ")", "ok");
                 } else {
                   fallos++;
+                  limitado = r.limitado === true;
                   log("FALLO " + f.name + "  " + r.error, "mal");
                 }
               })
               .then(function () {
-                var p = Math.round(((hechos + fallos) / lote.length) * 100);
-                el.barra.style.width = p + "%";
-                el.progresoTexto.textContent =
-                  hechos + " transferidos, " + fallos + " con error, de " + lote.length;
-                return new Promise(function (res) { setTimeout(res, 120); }).then(siguiente);
+                pintarProgreso(hechos, fallos, lote.length);
+                if (sesionCaida) return terminar();
+                // Pausa mayor si Google esta limitando: seguir al mismo ritmo solo empeora.
+                return espera(limitado ? 2500 : 120).then(siguiente);
               });
           }
 
           function terminar() {
+            estado.enLote = false;
             el.btnProbar.disabled = false;
             el.btnTransferir.disabled = false;
-            if (fallos === 0 && hechos > 0) {
+            el.btnDetener.classList.add("oculto");
+            bloquearLecturas(false);
+            pintarProgreso(hechos, fallos, lote.length);
+
+            if (sesionCaida) {
+              log("Sesión expirada o cambiada: el lote se detuvo tras " + (hechos + fallos) +
+                " de " + lote.length + ". Vuelve a conectar y analiza otra vez para retomar " +
+                "sólo lo que falta.", "mal");
+              return;
+            }
+            if (estado.cancelado) {
+              log("Detenido a petición tuya: " + (hechos + fallos) + " de " + lote.length +
+                " procesados.", "info");
+            } else if (fallos === 0 && hechos > 0) {
               log("Listo. Si Google pidió invitación, " + destino + " debe aceptarla desde su " +
                 "correo o desde Drive; hasta entonces los archivos seguirán apareciendo aquí " +
                 "como propios. Eso es normal, no es un error.", "info");
@@ -528,8 +746,20 @@
           siguiente();
         }
 
-        // Google trata distinto las cuentas personales y las de Workspace. Se intenta la vía
-        // directa y, si la rechaza, la invitación pendiente que usan las cuentas normales.
+        function pintarProgreso(hechos, fallos, total) {
+          var p = total ? Math.round(((hechos + fallos) / total) * 100) : 0;
+          el.barra.style.width = p + "%";
+          el.barraCaja.setAttribute("aria-valuenow", String(p));
+          el.progresoTexto.textContent =
+            hechos + " transferidos, " + fallos + " con error, de " + total;
+        }
+
+        function espera(ms) {
+          return new Promise(function (res) { setTimeout(res, ms); });
+        }
+
+        // Google trata distinto las cuentas personales y las de Workspace. Se intenta la via
+        // directa y, si la rechaza, la invitacion pendiente que usan las cuentas normales.
         function cederUno(fileId, destino) {
           var base = FILES + "/" + encodeURIComponent(fileId) + "/permissions";
 
@@ -538,7 +768,9 @@
             body: JSON.stringify({ role: "owner", type: "user", emailAddress: destino }),
           })
             .then(function (r) {
-              if (r.ok) return { ok: true, via: "propiedad directa" };
+              if (r.ok) return { ok: true, via: "propiedad directa", pendiente: false };
+              if (r.status === 401) return { sesionExpirada: true };
+
               return errorDe(r).then(function (m1) {
                 return api(base + "?sendNotificationEmail=true", {
                   method: "POST",
@@ -549,71 +781,134 @@
                     pendingOwner: true,
                   }),
                 }).then(function (r2) {
-                  if (r2.ok) return { ok: true, via: "invitación pendiente de aceptar" };
+                  if (r2.ok) {
+                    return { ok: true, via: "invitación pendiente de aceptar", pendiente: true };
+                  }
+                  if (r2.status === 401) return { sesionExpirada: true };
                   return errorDe(r2).then(function (m2) {
-                    return { ok: false, error: "directa: " + m1 + " | pendiente: " + m2 };
+                    return {
+                      ok: false,
+                      limitado: r.status === 429 || r2.status === 429,
+                      error: m1 === m2 ? m1 : m1 + " / " + m2,
+                    };
                   });
                 });
               });
             })
             .catch(function (e) {
-              return { ok: false, error: e.message };
+              return { ok: false, error: mensajeDe(e) };
             });
         }
 
-        // ---- Paso 4: dejar de ocupar espacio y salir de la carpeta -------------------
+        // ---- Paso 4: dejar de ocupar espacio y salir de la carpeta --------------------
         //
         // Salir es irreversible desde esta sesion: si quedara un solo archivo propio dentro,
         // ya no habria forma de cederlo (solo el dueno puede, y perderia el acceso). Por eso
-        // el boton nace bloqueado y solo lo desbloquea una comprobacion real sobre Drive,
-        // esta vez SIN filtro de fecha: mira toda la carpeta, no el rango elegido arriba.
+        // el boton nace bloqueado, solo lo desbloquea una lectura real de Drive, la
+        // habilitacion caduca, y ademas se vuelve a comprobar justo antes de ejecutar.
+        function revisarPropios() {
+          return Promise.all([
+            leerCarpeta({}),
+            leerCarpeta({ papelera: true }),
+          ]).then(function (r) {
+            var vivos = r[0];
+            var papelera = r[1].filter(function (f) { return f.ownedByMe; });
+            return {
+              mios: vivos.filter(function (f) {
+                return f.ownedByMe && f.mimeType !== CARPETA_MIME;
+              }),
+              // Un archivo tuyo en la papelera sigue ocupando TU espacio hasta que se vacie.
+              papelera: papelera,
+              // `in parents` solo ve el primer nivel: una subcarpeta puede esconder archivos.
+              subcarpetas: vivos.filter(function (f) { return f.mimeType === CARPETA_MIME; }),
+            };
+          });
+        }
+
         function comprobarSalida() {
-          el.btnComprobar.disabled = true;
+          bloquearLecturas(true);
           el.btnSalir.disabled = true;
+          estado.salidaSello = 0;
           el.estadoSalir.textContent = "Revisando la carpeta entera…";
-          estado.archivos = [];
 
-          leerPagina(null)
-            .then(function () {
-              var mios = estado.archivos.filter(function (f) { return f.ownedByMe; });
-              var bytes = mios.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
-
-              if (mios.length > 0) {
+          revisarPropios()
+            .then(function (r) {
+              if (r.mios.length > 0) {
+                var bytes = r.mios.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
                 el.estadoSalir.textContent =
-                  "Todavía quedan " + mios.length + " archivos tuyos (" + tam(bytes) +
+                  "Todavía quedan " + r.mios.length + " archivos tuyos (" + tam(bytes) +
                   ") en la carpeta. Transfiérelos primero: si sales ahora, seguirían ocupando " +
                   "tu espacio y ya no podrías cederlos.";
-                log("Salida bloqueada: quedan " + mios.length + " archivos propios.", "mal");
+                log("Salida bloqueada: quedan " + r.mios.length + " archivos propios.", "mal");
+                return;
+              }
+              if (r.subcarpetas.length > 0) {
+                el.estadoSalir.textContent =
+                  "Hay " + r.subcarpetas.length + " subcarpetas dentro y esta herramienta sólo " +
+                  "mira el primer nivel: no puede garantizar que no quede nada tuyo ahí dentro. " +
+                  "Revísalas a mano en Drive antes de salir.";
+                log("Salida bloqueada: " + r.subcarpetas.length + " subcarpetas sin revisar.", "mal");
+                return;
+              }
+              if (r.papelera.length > 0) {
+                var bytesP = r.papelera.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
+                el.estadoSalir.textContent =
+                  "No queda nada tuyo a la vista, pero hay " + r.papelera.length +
+                  " archivos tuyos en la papelera (" + tam(bytesP) + ") que SIGUEN ocupando tu " +
+                  "espacio. Vacía la papelera de Drive y vuelve a comprobar.";
+                log("Salida bloqueada: " + r.papelera.length + " archivos propios en la papelera.", "mal");
                 return;
               }
 
+              estado.salidaSello = Date.now();
               el.estadoSalir.textContent =
-                "No queda ningún archivo tuyo en la carpeta: ya no ocupa nada de tu espacio. " +
-                "Puedes salir cuando quieras.";
+                "No queda ningún archivo tuyo en la carpeta ni en su papelera: ya no ocupa nada " +
+                "de tu espacio. Puedes salir en los próximos 2 minutos.";
               el.btnSalir.disabled = false;
               log("Comprobación OK: 0 archivos propios en la carpeta.", "ok");
             })
             .catch(function (e) {
-              el.estadoSalir.textContent = "No se pudo comprobar: " + e.message;
+              el.estadoSalir.textContent = "No se pudo comprobar: " + mensajeDe(e);
             })
-            .then(function () { el.btnComprobar.disabled = false; });
+            .then(function () { bloquearLecturas(false); });
         }
 
         function salirDeLaCarpeta() {
-          var ok = window.confirm(
+          if (!estado.salidaSello || Date.now() - estado.salidaSello > VALIDEZ_COMPROBACION_MS) {
+            el.btnSalir.disabled = true;
+            el.estadoSalir.textContent =
+              "La comprobación caducó. Vuelve a comprobar antes de salir.";
+            return;
+          }
+
+          if (!window.confirm(
             "Vas a quitar el acceso de " + estado.email + " a la carpeta.\n\n" +
             "La carpeta desaparecerá de su Drive y no podrá volver a entrar salvo que el " +
             "dueño la comparta de nuevo. Los archivos NO se borran.\n\n¿Continuar?"
-          );
-          if (!ok) return;
+          )) return;
 
           el.btnSalir.disabled = true;
           el.panelRegistro.classList.remove("oculto");
-          el.estadoSalir.textContent = "Saliendo…";
+          el.estadoSalir.textContent = "Comprobando otra vez antes de salir…";
 
           var carpeta = FILES + "/" + encodeURIComponent(config().FOLDER_ID) + "/permissions";
+          var sesion = estado.email;
 
-          api(carpeta + "?fields=permissions(id,emailAddress,role)")
+          // Revalidacion justo antes de ejecutar: entre la comprobacion y este clic, la app
+          // del telefono pudo haber subido fotos a esta misma carpeta.
+          revisarPropios()
+            .then(function (r) {
+              if (sesion !== estado.email) throw new Error("La sesión cambió. No se hizo nada.");
+              var quedan = r.mios.length + r.papelera.length;
+              if (quedan > 0 || r.subcarpetas.length > 0) {
+                estado.salidaSello = 0;
+                throw new Error(
+                  "Aparecieron " + quedan + " archivos tuyos (y " + r.subcarpetas.length +
+                  " subcarpetas) desde la última comprobación. No se salió de la carpeta."
+                );
+              }
+              return api(carpeta + "?fields=permissions(id,emailAddress,role)");
+            })
             .then(function (r) {
               if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
               return r.json();
@@ -624,8 +919,8 @@
               })[0];
               if (!mio) {
                 throw new Error(
-                  "Esta cuenta no tiene un permiso propio sobre la carpeta (quizá lo hereda " +
-                  "de un enlace compartido). Debe quitarlo el dueño de la carpeta."
+                  "Esta cuenta no tiene un permiso propio sobre la carpeta (quizá lo hereda de " +
+                  "un enlace compartido). Debe quitarlo el dueño de la carpeta."
                 );
               }
               if (mio.role === "owner") {
@@ -636,32 +931,45 @@
             .then(function (r) {
               if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
               el.estadoSalir.textContent =
-                "Listo. " + estado.email + " ya no tiene acceso a la carpeta y no ocupa nada " +
-                "de su espacio.";
+                "Listo. " + estado.email + " ya no tiene acceso a la carpeta y no ocupa nada de " +
+                "su espacio.";
               log("Acceso de " + estado.email + " retirado de la carpeta.", "ok");
               el.panelAnalisis.classList.add("oculto");
               el.panelTransferir.classList.add("oculto");
             })
             .catch(function (e) {
-              el.estadoSalir.textContent = "No se pudo salir: " + e.message;
-              log("Fallo al salir de la carpeta: " + e.message, "mal");
-              el.btnSalir.disabled = false;
+              var m = mensajeDe(e);
+              el.estadoSalir.textContent = "No se salió de la carpeta: " + m;
+              log("Salida cancelada: " + m, "mal");
             });
         }
 
-        function alerta(mensaje) {
-          el.panelRegistro.classList.remove("oculto");
-          log(mensaje, "mal");
-        }
-
+        // ---- Registro -----------------------------------------------------------------
         function log(mensaje, clase) {
           var p = document.createElement("p");
           p.className = "r-" + (clase === "ok" ? "ok" : clase === "mal" ? "mal" : "info");
-          p.textContent = mensaje;
+          p.textContent = new Date().toLocaleTimeString() + "  " + mensaje;
           el.registro.appendChild(p);
           el.registro.scrollTop = el.registro.scrollHeight;
         }
 
+        function descargarRegistro() {
+          var lineas = Array.prototype.map.call(el.registro.children, function (p) {
+            return p.textContent;
+          });
+          if (lineas.length === 0) return;
+          var url = URL.createObjectURL(
+            new Blob([lineas.join("\r\n")], { type: "text/plain;charset=utf-8" })
+          );
+          var a = document.createElement("a");
+          a.href = url;
+          a.download = "transferencias-" + new Date().toISOString().slice(0, 10) + ".txt";
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+
+        // Escapa para contexto de TEXTO dentro de innerHTML. No sirve dentro de un atributo:
+        // no escapa comillas. Si alguna vez hace falta ahi, usar setAttribute.
         function txt(v) {
           var d = document.createElement("div");
           d.textContent = String(v == null ? "" : v);

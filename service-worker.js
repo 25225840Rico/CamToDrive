@@ -1,4 +1,4 @@
-const CACHE_NAME = "camtodrive-shell-v12";
+const CACHE_NAME = "camtodrive-shell-v13";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -59,6 +59,25 @@ async function networkFirst(request) {
     return response;
   } catch (_error) {
     const cached = await cache.match(request);
-    return cached || cache.match("./index.html");
+    if (cached) {
+      return cached;
+    }
+
+    // Ojo con el ultimo recurso: devolver index.html a cualquier ruta hace que sin conexion
+    // /transferir.html se convierta en silencio en la app de camara. Solo vale para la raiz.
+    const path = new URL(request.url).pathname;
+    const esRaiz = path.endsWith("/") || path.endsWith("/index.html");
+    if (request.mode === "navigate" && esRaiz) {
+      const shell = await cache.match("./index.html");
+      if (shell) {
+        return shell;
+      }
+    }
+
+    return new Response("Sin conexion: esta pagina no esta guardada para uso offline.", {
+      status: 503,
+      statusText: "Sin conexion",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
   }
 }

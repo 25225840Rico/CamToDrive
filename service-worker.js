@@ -1,4 +1,4 @@
-const CACHE_NAME = "camtodrive-shell-v16";
+const CACHE_NAME = "camtodrive-shell-v17";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -42,6 +42,13 @@ self.addEventListener("fetch", (event) => {
 
   const requestUrl = new URL(event.request.url);
   if (requestUrl.origin !== self.location.origin) {
+    return;
+  }
+
+  // La herramienta de transferencia NO pasa por el service worker. Necesita red para hablar
+  // con Drive, asi que guardarla no sirve de nada, y en cambio una copia vieja en cache hace
+  // imposible saber que version estas usando: la abres, se ve igual, y no hay forma de notarlo.
+  if (requestUrl.pathname.endsWith("/transferir.html")) {
     return;
   }
 

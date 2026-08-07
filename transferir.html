@@ -39,6 +39,16 @@
 
       .sub { color: var(--tinta-suave); margin: 0 0 24px; }
 
+      .sello {
+        display: inline-block;
+        margin-top: 6px;
+        padding: 2px 8px;
+        border: 1px solid var(--borde);
+        border-radius: 999px;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+
       .panel {
         background: var(--panel);
         border: 1px solid var(--borde);
@@ -232,6 +242,9 @@
       <p class="sub">
         Devuelve al dueño correcto los archivos que quedaron a nombre de otra cuenta dentro de la
         carpeta de CamToDrive.
+        <!-- Sello de version a la vista: sin esto, "no se si cargo la nueva" no tiene respuesta
+             posible desde el telefono. Subirlo en cada cambio de esta herramienta. -->
+        <br><span class="sello">Versión 3 · galería de miniaturas</span>
       </p>
 
       <div class="panel aviso">

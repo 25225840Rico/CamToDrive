@@ -531,6 +531,17 @@
           })
             .then(function (todos) {
               if (sesion !== estado.email) return;  // cambio de cuenta a mitad: se descarta
+
+              // Carpeta sin un solo archivo: la fecha no tiene nada que ver. Drive devuelve
+              // una lista vacia tanto si la carpeta esta vacia como si esta cuenta NO TIENE
+              // ACCESO a ella, y son dos problemas opuestos. Hay que preguntarselo a Drive.
+              if (todos.length === 0) {
+                estado.mios = [];
+                estado.analizadoCon = estado.email;
+                el.panelTransferir.classList.add("oculto");
+                return diagnosticarVacio();
+              }
+
               var desde = el.fechaDesde.value ? new Date(el.fechaDesde.value + "T00:00:00") : null;
               var lista = todos.filter(function (f) {
                 return !desde || new Date(f.createdTime) >= desde;
@@ -545,10 +556,96 @@
             .then(function () { bloquearLecturas(false); });
         }
 
+        // La carpeta no devolvio ni un archivo. Antes de culpar a la fecha hay que saber si
+        // esta cuenta siquiera VE la carpeta: sin acceso, Drive responde lo mismo que si
+        // estuviera vacia. Y si no la ve, los archivos siguen siendo suyos y ocupando su
+        // espacio en algun otro sitio, asi que se buscan por dueno en todo su Drive.
+        function diagnosticarVacio() {
+          var url = FILES + "/" + encodeURIComponent(config().FOLDER_ID) +
+            "?fields=id,name,trashed,ownedByMe,capabilities(canAddChildren)";
+
+          return api(url)
+            .then(function (r) {
+              if (r.status === 404 || r.status === 403) {
+                el.estadoAnalisis.textContent =
+                  "Esta cuenta (" + estado.email + ") NO tiene acceso a la carpeta de destino. " +
+                  "Por eso no ve nada. Buscando sus archivos en el resto de su Drive…";
+                log("La cuenta no puede abrir la carpeta " + config().FOLDER_ID +
+                  " (HTTP " + r.status + ").", "mal");
+                el.panelRegistro.classList.remove("oculto");
+                return buscarPorDueno();
+              }
+              if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
+              return r.json().then(function (carpeta) {
+                el.estadoAnalisis.textContent =
+                  'La carpeta "' + carpeta.name + '" se abre sin problema con esta cuenta, ' +
+                  "pero no contiene ni un archivo. Si esperabas encontrar fotos aquí, es que " +
+                  "ya no están en esta carpeta. Buscando sus archivos en el resto de su Drive…";
+                log('Carpeta "' + carpeta.name + '" accesible pero vacía.', "info");
+                el.panelRegistro.classList.remove("oculto");
+                return buscarPorDueno();
+              });
+            })
+            .catch(function (e) {
+              el.estadoAnalisis.textContent = "No se pudo diagnosticar: " + mensajeDe(e);
+            });
+        }
+
+        // Red de seguridad: los archivos que ocupan el espacio de esta cuenta, esten donde
+        // esten. Es lo unico que responde de verdad a "que sigue usando su almacenamiento".
+        function buscarPorDueno() {
+          var p = new URLSearchParams({
+            q: "'me' in owners and trashed=false and mimeType contains 'image/'",
+            fields: "files(id,name,size,createdTime,parents)",
+            orderBy: "createdTime desc",
+            pageSize: "100",
+          });
+
+          return api(FILES + "?" + p.toString())
+            .then(function (r) {
+              if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
+              return r.json();
+            })
+            .then(function (d) {
+              var fotos = d.files || [];
+              if (fotos.length === 0) {
+                log("Esta cuenta no tiene ninguna imagen propia en su Drive.", "ok");
+                el.estadoAnalisis.textContent +=
+                  " Resultado: esta cuenta no tiene ninguna imagen propia en su Drive. " +
+                  "No hay nada que transferir.";
+                return;
+              }
+
+              var bytes = fotos.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
+              log("Encontradas " + fotos.length + " imágenes propias (" + tam(bytes) +
+                "), la más reciente del " + String(fotos[0].createdTime).slice(0, 10) + ".", "info");
+
+              var html = "<h2>Imágenes que ocupan el espacio de esta cuenta</h2><p>" +
+                fotos.length + " imágenes, " + tam(bytes) + " en total. Las 20 más recientes:" +
+                "</p><div class='tabla-scroll'><table><tr><th>Archivo</th><th>Creado</th>" +
+                "<th class='num'>Peso</th></tr>";
+              fotos.slice(0, 20).forEach(function (f) {
+                html += "<tr><td>" + txt(f.name) + "</td><td>" +
+                  txt(String(f.createdTime).slice(0, 10)) + "</td><td class='num'>" +
+                  tam(f.size) + "</td></tr>";
+              });
+              html += "</table></div>";
+              el.resumen.innerHTML = html;
+            });
+        }
+
         function pintar(lista, todos) {
           if (lista.length === 0) {
+            // Hay archivos en la carpeta, solo que ninguno pasa el filtro de fecha. Decir
+            // cual es el mas reciente evita el juego de adivinar la fecha correcta.
+            var reciente = todos
+              .map(function (f) { return String(f.createdTime).slice(0, 10); })
+              .sort()
+              .pop();
             el.estadoAnalisis.textContent =
-              "No hay archivos en ese rango de fechas. Prueba con una fecha anterior o borra la fecha.";
+              "La carpeta tiene " + todos.length + " archivos, pero ninguno fue creado desde " +
+              el.fechaDesde.value + ". El más reciente es del " + reciente +
+              ". Cambia la fecha o bórrala para verlo todo.";
             el.panelTransferir.classList.add("oculto");
             return;
           }

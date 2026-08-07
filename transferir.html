@@ -210,6 +210,41 @@
 
       .mini-meta { font-size: 11px; color: var(--tinta-suave); }
 
+      /* El origen no se distingue solo por color: lleva su propia palabra ("CamToDrive" /
+         "No es de la app"), y el color solo refuerza lo que ya dice el texto. */
+      .mini-meta.origen {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 600;
+      }
+
+      .mini-meta.de-app { color: var(--ok); }
+      .mini-meta.ajena { color: var(--aviso); }
+
+      .check-linea {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        font-size: 14px;
+        color: var(--tinta);
+        margin: 0;
+        cursor: pointer;
+      }
+
+      .check-linea input {
+        width: 22px;
+        height: 22px;
+        min-height: 0;
+        margin: 2px 0 0;
+        padding: 0;
+        flex: none;
+        accent-color: #4ade80;
+        cursor: pointer;
+      }
+
+      .check-linea:focus-within { outline: 2px solid var(--acento); outline-offset: 4px; }
+
       table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 520px; }
       th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--borde); }
       th { color: var(--tinta-suave); font-weight: 600; }
@@ -244,7 +279,7 @@
         carpeta de CamToDrive.
         <!-- Sello de version a la vista: sin esto, "no se si cargo la nueva" no tiene respuesta
              posible desde el telefono. Subirlo en cada cambio de esta herramienta. -->
-        <br><span class="sello">Versión 3 · galería de miniaturas</span>
+        <br><span class="sello">Versión 4 · busca en todo el Drive</span>
       </p>
 
       <div class="panel aviso">
@@ -321,6 +356,20 @@
             <p class="error-campo" id="destinoError" role="alert"></p>
           </div>
         </div>
+
+        <div id="moverCaja" class="panel aviso oculto" style="margin:16px 0 0">
+          <label class="check-linea" for="mover">
+            <input type="checkbox" id="mover" checked>
+            <span>
+              <strong>Mover también los archivos a la carpeta de destino.</strong><br>
+              Estos archivos están fuera de la carpeta compartida. Ceder la propiedad no los
+              mueve: quedarían a nombre del destinatario pero dentro de una carpeta ajena, y
+              sólo aparecerían en su Drive como "compartido conmigo". Mover primero y ceder
+              después los deja donde deben estar. El archivo es el mismo: no se copia nada.
+            </span>
+          </label>
+        </div>
+
         <div class="acciones">
           <button id="btnProbar" type="button">Probar con 1 archivo</button>
           <button id="btnTransferir" type="button" class="peligro">Transferir todos</button>
@@ -398,6 +447,12 @@
             // transferir() lo consulta: si naciera dentro del pintado, un cambio de sesion
             // dejaria exclusiones de la cuenta anterior decidiendo que se cede.
             excluidos: {},
+            // Nombres de carpeta ya resueltos, por id. Cache por sesion: los nombres de una
+            // cuenta no valen para otra, asi que muere con el resto del estado.
+            carpetas: {},
+            // Los archivos encontrados estan FUERA de la carpeta de destino. Cambia lo que se
+            // ofrece: ahi mover no es un capricho, es lo que completa la operacion.
+            fueraDeCarpeta: false,
             invitados: {},
             salidaSello: 0,
             cancelado: false,
@@ -412,6 +467,7 @@
             "estadoConexion", "btnConectar", "btnCambiar", "panelAnalisis", "fechaDesde",
             "btnAnalizar", "estadoAnalisis", "resumen", "galeriaCaja", "galeria",
             "conteoSeleccion", "btnTodos", "btnNinguno", "panelTransferir", "destino",
+            "moverCaja", "mover",
             "destinoError", "btnProbar", "btnTransferir", "btnDetener", "progresoCaja",
             "barraCaja", "barra", "progresoTexto", "panelSalir", "estadoSalir", "btnComprobar",
             "btnSalir", "panelRegistro", "registro", "btnDescargar",
@@ -497,6 +553,7 @@
           el.panelSalir.classList.add("oculto");
           el.progresoCaja.classList.add("oculto");
           el.galeriaCaja.classList.add("oculto");
+          el.moverCaja.classList.add("oculto");
           el.btnDetener.classList.add("oculto");
           el.btnSalir.disabled = true;
           el.btnProbar.disabled = false;
@@ -612,7 +669,7 @@
                 (opciones.papelera ? "true" : "false"),
               fields:
                 "nextPageToken,files(id,name,size,mimeType,createdTime,ownedByMe," +
-                "owners(emailAddress),thumbnailLink)",
+                "owners(emailAddress),thumbnailLink,parents,appProperties)",
               pageSize: "1000",
             });
             if (pageToken) p.set("pageToken", pageToken);
@@ -644,6 +701,8 @@
           el.estadoAnalisis.textContent = "Leyendo la carpeta…";
           el.resumen.replaceChildren();
           el.galeriaCaja.classList.add("oculto");
+          el.moverCaja.classList.add("oculto");
+          estado.fueraDeCarpeta = false;
           var sesion = estado.email;
 
           leerCarpeta({
@@ -713,45 +772,134 @@
 
         // Red de seguridad: los archivos que ocupan el espacio de esta cuenta, esten donde
         // esten. Es lo unico que responde de verdad a "que sigue usando su almacenamiento".
+        // Y no es solo un informe: lo que encuentra se puede transferir, porque el caso real
+        // resulto ser justo este (la carpeta vacia y las fotos en otro sitio de su Drive).
         function buscarPorDueno() {
-          var p = new URLSearchParams({
-            q: "'me' in owners and trashed=false and mimeType contains 'image/'",
-            fields: "files(id,name,size,createdTime,parents)",
-            orderBy: "createdTime desc",
-            pageSize: "100",
+          var acumulado = [];
+
+          function pagina(pageToken) {
+            var p = new URLSearchParams({
+              q: "'me' in owners and trashed=false and mimeType contains 'image/'",
+              // pageSize 1000 y paginacion de verdad. Con el tope de 100 anterior, "100
+              // imagenes" era indistinguible de "las primeras 100 de las que haya".
+              fields:
+                "nextPageToken,files(id,name,size,mimeType,createdTime,ownedByMe," +
+                "owners(emailAddress),thumbnailLink,parents,appProperties)",
+              orderBy: "createdTime desc",
+              pageSize: "1000",
+            });
+            if (pageToken) p.set("pageToken", pageToken);
+
+            return api(FILES + "?" + p.toString())
+              .then(function (r) {
+                if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
+                return r.json();
+              })
+              .then(function (d) {
+                acumulado = acumulado.concat(d.files || []);
+                el.estadoAnalisis.textContent =
+                  "Buscando en todo el Drive de " + estado.email + "… " + acumulado.length +
+                  " imágenes encontradas.";
+                if (d.nextPageToken) return pagina(d.nextPageToken);
+                return acumulado;
+              });
+          }
+
+          return pagina(null).then(function (fotos) {
+            if (fotos.length === 0) {
+              log("Esta cuenta no tiene ninguna imagen propia en su Drive.", "ok");
+              el.estadoAnalisis.textContent =
+                "Esta cuenta no tiene ninguna imagen propia en su Drive. No hay nada que " +
+                "transferir.";
+              return;
+            }
+
+            var bytes = fotos.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
+            var deLaApp = fotos.filter(esDeLaApp);
+            log("Encontradas " + fotos.length + " imágenes propias (" + tam(bytes) +
+              "), la más reciente del " + String(fotos[0].createdTime).slice(0, 10) + ". " +
+              deLaApp.length + " llevan la marca de CamToDrive.", "info");
+
+            estado.mios = fotos;
+            estado.analizadoCon = estado.email;
+            // Estos archivos NO estan en la carpeta de destino: transferir la propiedad los
+            // deja donde estan. Por eso se ofrece moverlos, y por eso hace falta saberlo.
+            estado.fueraDeCarpeta = true;
+
+            return nombresDeCarpetas(fotos).then(function () {
+              var texto = fotos.length + " imágenes (" + tam(bytes) + ") ocupan el espacio de " +
+                estado.email + ", pero ninguna está en la carpeta de destino.";
+              texto += deLaApp.length > 0
+                ? " " + deLaApp.length + " llevan la marca de CamToDrive y vienen ya " +
+                  "seleccionadas; el resto son fotos suyas y quedan sin marcar."
+                : " Ninguna lleva la marca de CamToDrive, así que ninguna viene seleccionada: " +
+                  "marca a mano sólo lo que de verdad sea tuyo.";
+              el.estadoAnalisis.textContent = texto;
+
+              resumenPorCarpeta(fotos);
+              pintarGaleria();
+              el.moverCaja.classList.remove("oculto");
+              el.panelTransferir.classList.remove("oculto");
+            });
+          });
+        }
+
+        // La marca que deja la app al subir (appProperties.camtodriveId). Es lo unico que
+        // distingue de verdad una foto subida por CamToDrive de una foto personal de la
+        // cuenta: el nombre y la fecha se pueden parecer, la marca no se pone sola.
+        function esDeLaApp(f) {
+          return !!(f.appProperties && f.appProperties.camtodriveId);
+        }
+
+        // Resuelve el nombre de las carpetas que contienen los archivos. Saber que la foto
+        // esta en "BASE DE DATOS HW" y no en "Fotos de la boda" es la diferencia entre
+        // transferir lo correcto y regalar el album familiar.
+        function nombresDeCarpetas(fotos) {
+          var pendientes = [];
+          fotos.forEach(function (f) {
+            var id = f.parents && f.parents[0];
+            if (id && !(id in estado.carpetas) && pendientes.indexOf(id) === -1) {
+              pendientes.push(id);
+            }
+          });
+          if (pendientes.length === 0) return Promise.resolve();
+
+          return Promise.all(pendientes.map(function (id) {
+            return api(FILES + "/" + encodeURIComponent(id) + "?fields=id,name")
+              .then(function (r) { return r.ok ? r.json() : null; })
+              .then(function (c) { estado.carpetas[id] = c && c.name ? c.name : "(sin nombre)"; })
+              // Un nombre de carpeta que no se puede leer no puede frenar el analisis; se
+              // marca como desconocido y la galeria lo dice tal cual.
+              .catch(function () { estado.carpetas[id] = "(no se pudo leer)"; });
+          })).then(function () {});
+        }
+
+        function carpetaDe(f) {
+          var id = f.parents && f.parents[0];
+          if (!id) return "(sin carpeta)";
+          return estado.carpetas[id] || id;
+        }
+
+        function resumenPorCarpeta(fotos) {
+          var porCarpeta = {};
+          fotos.forEach(function (f) {
+            var c = carpetaDe(f);
+            if (!porCarpeta[c]) porCarpeta[c] = { n: 0, bytes: 0, app: 0 };
+            porCarpeta[c].n += 1;
+            porCarpeta[c].bytes += Number(f.size || 0);
+            if (esDeLaApp(f)) porCarpeta[c].app += 1;
           });
 
-          return api(FILES + "?" + p.toString())
-            .then(function (r) {
-              if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
-              return r.json();
-            })
-            .then(function (d) {
-              var fotos = d.files || [];
-              if (fotos.length === 0) {
-                log("Esta cuenta no tiene ninguna imagen propia en su Drive.", "ok");
-                el.estadoAnalisis.textContent +=
-                  " Resultado: esta cuenta no tiene ninguna imagen propia en su Drive. " +
-                  "No hay nada que transferir.";
-                return;
-              }
-
-              var bytes = fotos.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
-              log("Encontradas " + fotos.length + " imágenes propias (" + tam(bytes) +
-                "), la más reciente del " + String(fotos[0].createdTime).slice(0, 10) + ".", "info");
-
-              var html = "<h2>Imágenes que ocupan el espacio de esta cuenta</h2><p>" +
-                fotos.length + " imágenes, " + tam(bytes) + " en total. Las 20 más recientes:" +
-                "</p><div class='tabla-scroll'><table><tr><th>Archivo</th><th>Creado</th>" +
-                "<th class='num'>Peso</th></tr>";
-              fotos.slice(0, 20).forEach(function (f) {
-                html += "<tr><td>" + txt(f.name) + "</td><td>" +
-                  txt(String(f.createdTime).slice(0, 10)) + "</td><td class='num'>" +
-                  tam(f.size) + "</td></tr>";
-              });
-              html += "</table></div>";
-              el.resumen.innerHTML = html;
-            });
+          var html = "<h2>Dónde están esas imágenes</h2><div class='tabla-scroll'><table><tr>" +
+            "<th>Carpeta</th><th class='num'>Imágenes</th><th class='num'>De CamToDrive</th>" +
+            "<th class='num'>Peso</th></tr>";
+          Object.keys(porCarpeta).forEach(function (c) {
+            html += "<tr><td>" + txt(c) + "</td><td class='num'>" + porCarpeta[c].n +
+              "</td><td class='num'>" + porCarpeta[c].app + "</td><td class='num'>" +
+              tam(porCarpeta[c].bytes) + "</td></tr>";
+          });
+          html += "</table></div>";
+          el.resumen.innerHTML = html;
         }
 
         function pintar(lista, todos) {
@@ -830,13 +978,24 @@
           el.galeria.replaceChildren();
           estado.excluidos = {};
 
+          // Regla de preseleccion: si ALGUNA foto lleva la marca de CamToDrive, solo esas
+          // vienen marcadas. Si ninguna la lleva, no hay forma de distinguirlas y no se
+          // presume nada: se marcan todas solo cuando la lista sale de la carpeta destino.
+          var hayMarca = estado.mios.some(esDeLaApp);
+
           estado.mios.forEach(function (f) {
             var item = document.createElement("label");
             item.className = "mini";
 
+            var marcar = hayMarca ? esDeLaApp(f) : !estado.fueraDeCarpeta;
+            if (!marcar) {
+              estado.excluidos[f.id] = true;
+              item.classList.add("fuera");
+            }
+
             var casilla = document.createElement("input");
             casilla.type = "checkbox";
-            casilla.checked = true;
+            casilla.checked = marcar;
             casilla.className = "mini-check";
             casilla.addEventListener("change", function () {
               if (casilla.checked) {
@@ -880,7 +1039,15 @@
             meta.textContent = String(f.createdTime).slice(0, 10) + " · " + tam(f.size) +
               (estado.invitados[f.id] ? " · ya invitado" : "");
 
-            item.append(casilla, marco, nombre, meta);
+            // Origen: de donde salio la foto y en que carpeta vive. Sin esto, "no
+            // transferirlos mal" depende de reconocer 100 miniaturas de memoria.
+            var origen = document.createElement("span");
+            origen.className = "mini-meta origen " + (esDeLaApp(f) ? "de-app" : "ajena");
+            origen.textContent = (esDeLaApp(f) ? "CamToDrive" : "No es de la app") +
+              (estado.fueraDeCarpeta ? " · " + carpetaDe(f) : "");
+            origen.title = origen.textContent;
+
+            item.append(casilla, marco, nombre, meta, origen);
             el.galeria.appendChild(item);
           });
 
@@ -977,11 +1144,16 @@
           var lote = soloUno ? candidatos.slice(0, 1) : candidatos.slice();
           if (lote.length === 0) return;
 
+          // Mover solo cuando la casilla esta visible Y marcada: si la lista salio de la
+          // propia carpeta de destino, no hay nada que mover y la opcion ni se ofrece.
+          var mueve = estado.fueraDeCarpeta && el.mover.checked;
+
           if (!soloUno && !window.confirm(
             "Se cederá la propiedad de " + lote.length + " archivos.\n\n" +
             "De:   " + estado.email + "\n" +
-            "Para: " + destino + "\n\n" +
-            "Los archivos NO se mueven ni se borran. ¿Continuar?"
+            "Para: " + destino + "\n" +
+            (mueve ? "Y se moverán a la carpeta de destino.\n" : "") + "\n" +
+            "Los archivos NO se copian ni se borran. ¿Continuar?"
           )) return;
 
           el.btnProbar.disabled = true;
@@ -1008,7 +1180,22 @@
             if (sesion !== estado.email) { sesionCaida = true; return terminar(); }
 
             var f = lote[i++];
-            return cederUno(f.id, destino)
+            // El movimiento va primero y no aborta la cesion si falla: quedarse sin mover es
+            // molesto, quedarse sin transferir es no haber hecho nada.
+            var previo = mueve
+              ? moverALaCarpeta(f).then(function (m) {
+                  if (m.sesionExpirada) { sesionCaida = true; return false; }
+                  if (m.error) log("aviso " + f.name + "  no se pudo mover: " + m.error, "mal");
+                  else if (m.movido) log("mov   " + f.name + "  → carpeta de destino", "info");
+                  return true;
+                })
+              : Promise.resolve(true);
+
+            return previo
+              .then(function (seguir) {
+                if (!seguir) return { sesionExpirada: true };
+                return cederUno(f.id, destino);
+              })
               .then(function (r) {
                 if (r.sesionExpirada) {
                   sesionCaida = true;
@@ -1077,6 +1264,29 @@
 
         // Google trata distinto las cuentas personales y las de Workspace. Se intenta la via
         // directa y, si la rechaza, la invitacion pendiente que usan las cuentas normales.
+        // Mueve el archivo a la carpeta de destino ANTES de ceder la propiedad, mientras esta
+        // cuenta todavia es duena y puede escribir en la carpeta compartida. Al reves no
+        // funcionaria: una vez cedida, mover deja de ser asunto suyo.
+        function moverALaCarpeta(f) {
+          var actual = (f.parents || []).join(",");
+          if (actual.indexOf(config().FOLDER_ID) !== -1) {
+            return Promise.resolve({ movido: false, motivo: "ya estaba en la carpeta" });
+          }
+
+          var url = FILES + "/" + encodeURIComponent(f.id) + "?addParents=" +
+            encodeURIComponent(config().FOLDER_ID) +
+            (actual ? "&removeParents=" + encodeURIComponent(actual) : "") +
+            "&fields=id,parents";
+
+          return api(url, { method: "PATCH", body: JSON.stringify({}) })
+            .then(function (r) {
+              if (r.ok) return { movido: true };
+              if (r.status === 401) return { sesionExpirada: true };
+              return errorDe(r).then(function (m) { return { movido: false, error: m }; });
+            })
+            .catch(function (e) { return { movido: false, error: mensajeDe(e) }; });
+        }
+
         function cederUno(fileId, destino) {
           var base = FILES + "/" + encodeURIComponent(fileId) + "/permissions";
 

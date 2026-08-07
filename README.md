@@ -16,7 +16,7 @@ Si en algun momento quieres calidad 100% nativa (archivo original del telefono, 
 ## Archivos principales
 
 - `index.html`: estructura de la app. El visor ocupa la pantalla entera (`.stage`) y los controles flotan encima en una capa aparte (`.hud`); ademas, panel de fallback nativo, meta tags PWA/iOS y carga de GIS.
-- `config.js`: `CLIENT_ID`, `FOLDER_ID`, `FOLDER_NAME`, resolucion ideal y calidad de captura.
+- `config.js`: `CLIENT_ID`, `ALLOWED_EMAILS`, `FOLDER_ID`, `FOLDER_EXPECTED_NAME`, resolucion ideal y calidad de captura.
 - `app.js`: autenticacion OAuth, camara continua, captura con `ImageCapture` o canvas, cola IndexedDB, subida multipart/resumable a Drive, concurrencia limitada y reintentos.
 - `styles.css`: UI mobile-first sin marcos: la imagen es el fondo y los controles son vidrio flotante (Liquid Glass). Cada capa del material traduce una ley optica: Fresnel en los cantos, reflejo especular Blinn-Phong arriba-izquierda, absorcion Beer-Lambert en el tinte y dispersion de Cauchy en las franjas de color. El unico marco dibujado es el de foco, que abarca el encuadre util y se pinta con cantoneras enmascaradas.
 - `manifest.webmanifest`: instalacion PWA.
@@ -67,10 +67,21 @@ Reemplaza `CLIENT_ID` por el OAuth Client ID real y deja `FOLDER_ID` con el ID d
 
 ```js
 const CLIENT_ID = "TU_CLIENT_ID_REAL.apps.googleusercontent.com";
+const ALLOWED_EMAILS = ["tucorreo@gmail.com"];
 const FOLDER_ID = "ID_DE_LA_CARPETA_DE_DRIVE";
+const FOLDER_EXPECTED_NAME = "NOMBRE DE ESA CARPETA";
 ```
 
-Cada usuario autenticado debe tener permiso para crear archivos en esa carpeta.
+### Las dos puertas: quien sube y adonde
+
+En Drive el espacio de un archivo lo paga **quien lo sube**, no el dueno de la carpeta. Por eso hacen falta dos comprobaciones distintas, y ninguna implica la otra:
+
+1. **Quien sube** — `ALLOWED_EMAILS`. Al conectar, la app pregunta a Drive de quien es el token y bloquea la subida si no esta en la lista. Sin esto, el navegador puede entregar un token de otra sesion activa sin mostrar ninguna pantalla, y las fotos quedan en el Drive de esa persona aunque caigan en la carpeta correcta. Paso el 31 de julio de 2026.
+2. **Adonde** — `FOLDER_ID` + `FOLDER_EXPECTED_NAME`. La app comprueba contra Drive que ese ID existe, es una carpeta, no esta en la papelera, **te pertenece** y admite archivos. Si la carpeta fuera de otra cuenta, no sube nada. El nombre solo avisa por consola: atrapa un ID mal pegado, que casi nunca apunta a "nada" sino a otra carpeta real.
+
+**No hay carpeta de respaldo.** Sin `FOLDER_ID` la app no conecta ni sube. La version anterior creaba una carpeta por nombre cuando faltaba el ID, y la creaba en el Drive de la cuenta conectada: un destino que dependia de la sesion del navegador.
+
+Si vas a compartir la carpeta con otra persona, ten claro que **cada foto que suba ella ocupara SU espacio de Drive, no el tuyo** — aunque viva en tu carpeta. Si no quieres eso, no la agregues a `ALLOWED_EMAILS` y quitale el acceso a la carpeta en Drive.
 
 ## 5. Publicar en GitHub Pages
 

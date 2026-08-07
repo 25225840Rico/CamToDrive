@@ -3,6 +3,7 @@
 
   const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
   const DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files";
+  const DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder";
   // Devuelve de quien es el token. Se consulta con el scope de Drive que la app ya tiene,
   // asi que verificar la identidad NO obliga a pedir permisos nuevos ni a reconsentir.
   const DRIVE_ABOUT_URL =
@@ -41,6 +42,10 @@
     accountEmail: null,
     accountVerified: false,
     rejectedEmail: "",
+    // Identidad de la CARPETA. Saber quien sube no basta: hay que saber tambien adonde.
+    // Mientras folderVerified sea false no sale ni una foto.
+    folderVerified: false,
+    folderError: "",
     blockedByOwnerCount: 0,
     isProcessingQueue: false,
     queueProcessRequested: false,
@@ -116,14 +121,12 @@
       return;
     }
 
-    // Guardarrail: sin FOLDER_ID la app crea una carpeta en el Drive de QUIEN ESTE
-    // CONECTADO. Con una carpeta fija esa via esta cerrada, pero si alguien vacia el valor
-    // el destino vuelve a depender de la sesion. Mejor decirlo que descubrirlo despues.
+    // Sin carpeta fija no hay app. Antes esto era un console.warn y la subida seguia
+    // adelante inventando un destino; ahora se dice en pantalla y no se conecta nada.
     if (!getAppConfig().FOLDER_ID) {
-      console.warn(
-        "CamToDrive: sin FOLDER_ID las fotos van a una carpeta creada en el Drive de la " +
-          "cuenta conectada, no a una carpeta fija."
-      );
+      setStatus("Falta la carpeta", "error");
+      setHint("Falta FOLDER_ID en config.js. La app no sube nada sin una carpeta fija.");
+      return;
     }
 
     try {
@@ -347,6 +350,15 @@
     scheduleTokenExpiry(expiresInMs);
     rememberAccount(email);
 
+    // SEGUNDA PUERTA: la carpeta. La primera responde "quien sube"; esta responde "adonde".
+    // Las dos hacen falta, y ninguna implica la otra.
+    if (!(await verifyTargetFolder())) {
+      setStatus("Carpeta equivocada", "error");
+      setHint(state.folderError);
+      updateControls();
+      return;
+    }
+
     // Fotos encoladas antes de que existiera esta verificacion: se adoptan ahora que hay una
     // cuenta autorizada confirmada, en vez de quedar bloqueadas para siempre.
     await adoptOrphanQueuePhotos(email);
@@ -370,6 +382,90 @@
 
     const data = await response.json();
     return data && data.user ? data.user : null;
+  }
+
+  // Comprueba contra Drive que FOLDER_ID es lo que decimos que es: existe, es una carpeta,
+  // no esta en la papelera, TE PERTENECE y admite archivos nuevos.
+  //
+  // Por que "te pertenece" importa tanto: en Drive el espacio lo paga el dueno de cada
+  // archivo, y un archivo hereda el destino, no el dueno. Si FOLDER_ID apuntara a una
+  // carpeta de otra persona, las fotos seguirian siendo tuyas pero viviendo en el Drive de
+  // ella; y si otra cuenta subiera aqui, el espacio lo pagaria ella. Esta comprobacion cierra
+  // la primera mitad; ALLOWED_EMAILS cierra la segunda.
+  async function verifyTargetFolder() {
+    const folderId = getAppConfig().FOLDER_ID;
+
+    if (!folderId) {
+      state.folderVerified = false;
+      state.folderError =
+        "Falta FOLDER_ID en config.js. La app no sube nada sin una carpeta fija.";
+      return false;
+    }
+
+    const params = new URLSearchParams({
+      fields: "id,name,mimeType,trashed,ownedByMe,owners(emailAddress),capabilities(canAddChildren)",
+    });
+
+    let folder = null;
+    try {
+      const response = await authorizedFetch(
+        `${DRIVE_FILES_URL}/${encodeURIComponent(folderId)}?${params.toString()}`
+      );
+      if (!response.ok) {
+        throw new Error(await getResponseMessage(response));
+      }
+      folder = await response.json();
+    } catch (error) {
+      // Un fallo de red no es un veredicto: la carpeta puede estar perfecta. Se deja sin
+      // verificar para reintentar, pero sin subir mientras tanto.
+      console.error(error);
+      state.folderVerified = false;
+      state.folderError =
+        "No se pudo comprobar la carpeta de destino. Las fotos quedan en cola hasta lograrlo.";
+      return false;
+    }
+
+    if (folder.trashed) {
+      state.folderVerified = false;
+      state.folderError = "La carpeta de destino esta en la papelera de Drive. Restaurala.";
+      return false;
+    }
+
+    if (folder.mimeType !== DRIVE_FOLDER_MIME) {
+      state.folderVerified = false;
+      state.folderError = "El FOLDER_ID de config.js no apunta a una carpeta.";
+      return false;
+    }
+
+    // ownedByMe false = la carpeta es de otra cuenta. Es exactamente el escenario que hay
+    // que impedir, asi que se bloquea; el nombre del dueno se muestra para no adivinar.
+    if (folder.ownedByMe !== true) {
+      const owner = (folder.owners && folder.owners[0] && folder.owners[0].emailAddress) || "otra cuenta";
+      state.folderVerified = false;
+      state.folderError =
+        `La carpeta de destino es de ${owner}, no tuya. No se sube nada: ocuparia SU espacio.`;
+      return false;
+    }
+
+    if (folder.capabilities && folder.capabilities.canAddChildren === false) {
+      state.folderVerified = false;
+      state.folderError = "No tienes permiso para agregar archivos a la carpeta de destino.";
+      return false;
+    }
+
+    const expected = getAppConfig().FOLDER_EXPECTED_NAME;
+    if (expected && folder.name !== expected) {
+      // Solo avisa. La carpeta es tuya y admite archivos: el destino es seguro aunque la
+      // hayas renombrado. Bloquear por un renombrado tuyo seria pelearse con el dueno.
+      console.warn(
+        `CamToDrive: la carpeta de destino se llama "${folder.name}" y se esperaba ` +
+          `"${expected}". Si no la renombraste tu, revisa el FOLDER_ID de config.js.`
+      );
+    }
+
+    state.folderVerified = true;
+    state.folderError = "";
+    return true;
   }
 
   function getAllowedEmails() {
@@ -431,6 +527,9 @@
     state.tokenExpiresAt = 0;
     state.accountEmail = null;
     state.accountVerified = false;
+    // La carpeta se verifico CON ESE token y para ESA cuenta: `ownedByMe` es una respuesta
+    // relativa a quien pregunta. Al caer la sesion, el veredicto deja de valer.
+    state.folderVerified = false;
     if (state.tokenExpiryTimer) {
       window.clearTimeout(state.tokenExpiryTimer);
       state.tokenExpiryTimer = null;
@@ -1728,7 +1827,7 @@
   // ---------------------------------------------------------------------------
 
   async function uploadPhotoToDrive(blob, fileName, uploadId, onProgress) {
-    const folderId = await getOrCreateFolderId();
+    const folderId = getTargetFolderId();
 
     if (blob.size > MULTIPART_MAX_BYTES) {
       return uploadResumable(folderId, blob, fileName, uploadId, onProgress);
@@ -1776,15 +1875,11 @@
   }
 
   async function uploadMultipart(folderId, blob, fileName, uploadId, onProgress) {
-    let response = await sendMultipartUpload(folderId, blob, fileName, uploadId, onProgress);
+    const response = await sendMultipartUpload(folderId, blob, fileName, uploadId, onProgress);
 
-    // Solo tiene sentido reintentar con otra carpeta cuando la carpeta se resolvio por nombre.
-    if (response.status === 404 && !getAppConfig().FOLDER_ID) {
-      localStorage.removeItem(getFolderStorageKey());
-      const freshFolderId = await getOrCreateFolderId();
-      response = await sendMultipartUpload(freshFolderId, blob, fileName, uploadId, onProgress);
-    }
-
+    // Antes, un 404 disparaba un reintento que resolvia la carpeta por nombre y podia acabar
+    // creando una nueva en el Drive de la sesion. Ya no: si la carpeta fija no responde, el
+    // fallo se reporta y la foto se queda en cola. Nunca se inventa un destino.
     if (!response.ok) {
       throw new Error(await getResponseMessage(response));
     }
@@ -1911,74 +2006,18 @@
     };
   }
 
-  async function getOrCreateFolderId() {
-    // Si hay una carpeta fija configurada, se usa directo para todos los usuarios autorizados.
-    const fixedFolderId = getAppConfig().FOLDER_ID;
-    if (fixedFolderId) {
-      return fixedFolderId;
+  // Unica fuente del destino. No busca, no crea, no recuerda: o es la carpeta configurada y
+  // verificada, o no hay subida. Este lanzar es el guardarrail duro; que nunca se llegue aqui
+  // (processPendingQueue ya bloquea antes) es lo esperado, no lo que garantiza nada.
+  function getTargetFolderId() {
+    const folderId = getAppConfig().FOLDER_ID;
+    if (!folderId) {
+      throw new Error("Falta FOLDER_ID en config.js: no hay carpeta de destino.");
     }
-
-    const storageKey = getFolderStorageKey();
-    const cachedFolderId = localStorage.getItem(storageKey);
-    if (cachedFolderId) {
-      return cachedFolderId;
+    if (!state.folderVerified) {
+      throw new Error("La carpeta de destino no esta verificada todavia.");
     }
-
-    const foundFolderId = await findDriveFolder();
-    if (foundFolderId) {
-      localStorage.setItem(storageKey, foundFolderId);
-      return foundFolderId;
-    }
-
-    const createdFolderId = await createDriveFolder();
-    localStorage.setItem(storageKey, createdFolderId);
-    return createdFolderId;
-  }
-
-  async function findDriveFolder() {
-    const folderName = getAppConfig().FOLDER_NAME || "Fotos App";
-    const query = [
-      "mimeType='application/vnd.google-apps.folder'",
-      "trashed=false",
-      `name='${escapeDriveQueryValue(folderName)}'`,
-      "'root' in parents",
-    ].join(" and ");
-    const params = new URLSearchParams({
-      q: query,
-      spaces: "drive",
-      fields: "files(id,name)",
-      pageSize: "1",
-    });
-    const response = await authorizedFetch(`${DRIVE_FILES_URL}?${params.toString()}`);
-
-    if (!response.ok) {
-      throw new Error(await getResponseMessage(response));
-    }
-
-    const data = await response.json();
-    return data.files && data.files.length > 0 ? data.files[0].id : null;
-  }
-
-  async function createDriveFolder() {
-    const folderName = getAppConfig().FOLDER_NAME || "Fotos App";
-    const response = await authorizedFetch(`${DRIVE_FILES_URL}?fields=id,name`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json; charset=UTF-8",
-      },
-      body: JSON.stringify({
-        name: folderName,
-        mimeType: "application/vnd.google-apps.folder",
-        parents: ["root"],
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(await getResponseMessage(response));
-    }
-
-    const data = await response.json();
-    return data.id;
+    return folderId;
   }
 
   // Evita duplicados: si un intento anterior llego a Drive pero se perdio la respuesta,
@@ -2073,6 +2112,18 @@
     if (!navigator.onLine || !isAuthenticated()) {
       await refreshPendingCount();
       updateControls();
+      return;
+    }
+
+    // Carpeta sin verificar: se reintenta la verificacion en vez de rendirse. Si la causa fue
+    // un corte de red al conectar, la cola arranca sola en cuanto vuelva; si la carpeta es de
+    // verdad la equivocada, sigue sin salir nada.
+    if (!state.folderVerified && !(await verifyTargetFolder())) {
+      setStatus("Carpeta equivocada", "error");
+      setHint(state.folderError);
+      await refreshPendingCount();
+      updateControls();
+      scheduleQueueRetry();
       return;
     }
 
@@ -2467,10 +2518,6 @@
     return String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
   }
 
-  function getFolderStorageKey() {
-    return `camtodrive.folderId.${getAppConfig().FOLDER_NAME || "Fotos App"}`;
-  }
-
   function setStatus(message, tone) {
     elements.statusText.textContent = message;
     elements.statusText.classList.remove("ok", "warning", "error");
@@ -2551,6 +2598,20 @@
 
     if (authenticated && state.accountEmail) {
       chip.hidden = false;
+
+      // Cuenta correcta pero carpeta sin verificar: en verde el chip diria "todo bien"
+      // mientras no sube nada. El chip informa del destino, no solo de la identidad.
+      if (!state.folderVerified) {
+        chip.textContent = `⚠ ${state.accountEmail}`;
+        chip.classList.add("error");
+        chip.setAttribute(
+          "aria-label",
+          `Conectado como ${state.accountEmail}, pero la carpeta de destino no esta verificada.`
+        );
+        chip.title = state.folderError || "Carpeta de destino sin verificar.";
+        return;
+      }
+
       chip.textContent = state.accountEmail;
       chip.classList.add("ok");
       chip.setAttribute(
@@ -2572,6 +2633,9 @@
     }
     if (!state.gisReady) {
       return "Cargando Google Identity Services...";
+    }
+    if (authenticated && !state.folderVerified && state.folderError) {
+      return state.folderError;
     }
     if (state.cameraError) {
       return state.cameraError;

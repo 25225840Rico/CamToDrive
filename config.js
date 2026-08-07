@@ -19,14 +19,23 @@ const CLIENT_ID = "430217123425-7lad1gutumj5lreq7d5jsb6153ab0rlv.apps.googleuser
 // subida si no coincide. Deja la lista vacia ([]) solo si aceptas que suba cualquier cuenta.
 const ALLOWED_EMAILS = ["aronricocl@gmail.com"];
 
-// Nombre de la carpeta (solo se usa como respaldo si NO se define FOLDER_ID).
-const FOLDER_NAME = "Fotos App";
-
-// ID de una carpeta EXISTENTE de tu Google Drive donde se guardaran todas las fotos.
+// ID de la UNICA carpeta a la que sube esta app. OBLIGATORIO.
 // Se obtiene de la URL de la carpeta: drive.google.com/drive/folders/<ESTE_ID>
-// Si se define, la app sube directo aqui (requiere scope de Drive completo).
-// Si se deja vacio (""), la app crea/reutiliza una carpeta llamada FOLDER_NAME.
+//
+// Sin este valor la app NO sube nada. Antes existia un respaldo que creaba una carpeta por
+// nombre cuando faltaba el ID, y esa carpeta se creaba en el Drive de la cuenta conectada:
+// un destino que dependia de la sesion del navegador. Se elimino a proposito. Un destino
+// fijo o ningun destino.
 const FOLDER_ID = "1BCGezpp8M6vuQN4TL_l-atJtLPEOJ0f2";
+
+// Nombre que debe tener esa carpeta. Al conectar, la app comprueba contra Drive que
+// FOLDER_ID existe, que se llama asi, que es una carpeta y que TE PERTENECE A TI.
+//
+// El nombre atrapa el error humano: un ID mal pegado casi nunca apunta a "nada", apunta a
+// otra carpeta real, y sin esta comprobacion las fotos se irian ahi en silencio. Un nombre
+// distinto solo avisa; lo que bloquea la subida es que la carpeta no sea tuya.
+// Dejalo vacio ("") para no comprobar el nombre.
+const FOLDER_EXPECTED_NAME = "BASE DE DATOS HW";
 
 // Resolucion que se le pide a la camara continua. La app pide siempre el maximo que el
 // dispositivo acepte; estos valores son el "ideal" inicial antes de subir al maximo real.
@@ -61,8 +70,8 @@ const CAPTURE_QUALITY = 1;
 const CONFIG = Object.freeze({
   CLIENT_ID,
   ALLOWED_EMAILS,
-  FOLDER_NAME,
   FOLDER_ID,
+  FOLDER_EXPECTED_NAME,
   CAPTURE_IDEAL_WIDTH,
   CAPTURE_IDEAL_HEIGHT,
   CAPTURE_MAX_PIXELS,

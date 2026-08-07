@@ -1,4 +1,4 @@
-const CACHE_NAME = "camtodrive-shell-v13";
+const CACHE_NAME = "camtodrive-shell-v14";
 const SHELL_FILES = [
   "./",
   "./index.html",

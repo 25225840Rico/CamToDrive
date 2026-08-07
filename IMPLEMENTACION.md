@@ -189,12 +189,12 @@ La carpeta de Drive esta compartida como "cualquiera con el enlace -> Editor" y 
 - Barra de progreso real por foto con `XMLHttpRequest` y `xhr.upload.onprogress`, mas una barra global de lote.
 - Los nombres de archivo usan timestamp con milisegundos y extension derivada del MIME real: `AAAA-MM-DD_HH-MM-SS-mmm.ext`.
 - Subida en segundo plano con cola IndexedDB, concurrencia limitada a 3 fotos y reintentos con backoff. Tomar otra foto no espera a que terminen las subidas.
-- Se mantienen el boton `Conectar Google`, el scope `https://www.googleapis.com/auth/drive`, `CLIENT_ID`, `FOLDER_ID` y `FOLDER_NAME` de `config.js`.
+- Se mantienen el boton `Conectar Google`, el scope `https://www.googleapis.com/auth/drive`, `CLIENT_ID` y `FOLDER_ID` de `config.js`. `FOLDER_NAME` se elimino junto con la carpeta de respaldo que creaba en el Drive de la sesion; ahora `FOLDER_EXPECTED_NAME` solo sirve para verificar que `FOLDER_ID` apunta a la carpeta esperada.
 
 ## Archivos principales
 
 - `index.html`: una pagina con visor continuo, panel de fallback nativo, contadores y lista de disparos recientes.
-- `config.js`: `CLIENT_ID`, `FOLDER_NAME`, `FOLDER_ID`, `CAPTURE_IDEAL_WIDTH/HEIGHT` y `CAPTURE_QUALITY`.
+- `config.js`: `CLIENT_ID`, `ALLOWED_EMAILS`, `FOLDER_ID`, `FOLDER_EXPECTED_NAME`, `CAPTURE_IDEAL_WIDTH/HEIGHT` y `CAPTURE_QUALITY`.
 - `app.js`: Google Identity Services, camara continua, captura, cola IndexedDB, subida multipart/resumable, concurrencia, reintentos y reconexion.
 - `styles.css`: interfaz mobile-first con visor, estados de cola y modo claro/oscuro.
 - `manifest.webmanifest`: manifest PWA con scope/start URL relativos.

@@ -113,6 +113,93 @@
 
       .tabla-scroll { overflow-x: auto; }
 
+      /* Galeria de verificacion: mirar antes de ceder. auto-fill deja que el numero de
+         columnas lo decida el ancho real, sin media queries que adivinen dispositivos. */
+      .galeria {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 10px;
+        max-height: 60vh;
+        overflow-y: auto;
+        padding: 4px;
+      }
+
+      .galeria-barra {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        justify-content: space-between;
+        margin: 16px 0 4px;
+      }
+
+      .galeria-barra p { margin: 0; font-weight: 600; }
+      .galeria-barra button { padding: 8px 12px; font-size: 13px; }
+
+      .mini {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 6px;
+        border: 1px solid var(--borde);
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.25);
+        cursor: pointer;
+      }
+
+      /* El estado no puede depender solo del color: el excluido tambien baja opacidad y
+         apaga la imagen, y la casilla sigue siendo la fuente de verdad. */
+      .mini.fuera { opacity: 0.45; border-style: dashed; }
+      .mini.fuera .mini-marco { filter: grayscale(1); }
+
+      .mini:focus-within {
+        outline: 2px solid var(--acento);
+        outline-offset: 2px;
+      }
+
+      .mini-check {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 1;
+        width: 22px;
+        height: 22px;
+        min-height: 0;
+        padding: 0;
+        margin: 0;
+        accent-color: #4ade80;
+        cursor: pointer;
+      }
+
+      .mini-marco {
+        aspect-ratio: 1 / 1;
+        border-radius: 6px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.05);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .mini-marco img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+      .mini-vacia {
+        font-size: 11px;
+        color: var(--tinta-suave);
+        text-align: center;
+        padding: 6px;
+      }
+
+      .mini-nombre {
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mini-meta { font-size: 11px; color: var(--tinta-suave); }
+
       table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 520px; }
       th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--borde); }
       th { color: var(--tinta-suave); font-weight: 600; }
@@ -187,7 +274,20 @@
         </div>
         <p id="estadoAnalisis" role="status" aria-live="polite"></p>
         <div id="resumen"></div>
-        <div class="tabla-scroll"><table id="tabla" class="oculto"></table></div>
+
+        <div id="galeriaCaja" class="oculto">
+          <div class="galeria-barra">
+            <p id="conteoSeleccion" role="status" aria-live="polite"></p>
+            <div class="acciones" style="margin:0">
+              <button id="btnTodos" type="button">Marcar todos</button>
+              <button id="btnNinguno" type="button">Desmarcar todos</button>
+            </div>
+          </div>
+          <p class="sub" style="font-size:13px; margin:0 0 12px">
+            Sólo se transfieren los archivos marcados. Desmarca lo que no quieras tocar.
+          </p>
+          <div id="galeria" class="galeria"></div>
+        </div>
       </section>
 
       <!-- PASO 3: transferencia -->
@@ -281,6 +381,10 @@
             // Con que cuenta se hizo el analisis. Si cambia la sesion, el lote deja de valer:
             // esta herramienta existe porque una sesion equivocada hizo justo eso.
             analizadoCon: "",
+            // Marcados a mano para NO transferir. Vive aqui y no solo en la galeria porque
+            // transferir() lo consulta: si naciera dentro del pintado, un cambio de sesion
+            // dejaria exclusiones de la cuenta anterior decidiendo que se cede.
+            excluidos: {},
             invitados: {},
             salidaSello: 0,
             cancelado: false,
@@ -293,7 +397,8 @@
 
           [
             "estadoConexion", "btnConectar", "btnCambiar", "panelAnalisis", "fechaDesde",
-            "btnAnalizar", "estadoAnalisis", "resumen", "tabla", "panelTransferir", "destino",
+            "btnAnalizar", "estadoAnalisis", "resumen", "galeriaCaja", "galeria",
+            "conteoSeleccion", "btnTodos", "btnNinguno", "panelTransferir", "destino",
             "destinoError", "btnProbar", "btnTransferir", "btnDetener", "progresoCaja",
             "barraCaja", "barra", "progresoTexto", "panelSalir", "estadoSalir", "btnComprobar",
             "btnSalir", "panelRegistro", "registro", "btnDescargar",
@@ -302,6 +407,8 @@
           el.btnConectar.addEventListener("click", pedirToken);
           el.btnCambiar.addEventListener("click", pedirToken);
           el.btnAnalizar.addEventListener("click", analizar);
+          el.btnTodos.addEventListener("click", function () { marcarTodos(true); });
+          el.btnNinguno.addEventListener("click", function () { marcarTodos(false); });
           el.btnProbar.addEventListener("click", function () { transferir(true); });
           el.btnTransferir.addEventListener("click", function () { transferir(false); });
           el.btnDetener.addEventListener("click", function () {
@@ -376,7 +483,7 @@
           el.panelTransferir.classList.add("oculto");
           el.panelSalir.classList.add("oculto");
           el.progresoCaja.classList.add("oculto");
-          el.tabla.classList.add("oculto");
+          el.galeriaCaja.classList.add("oculto");
           el.btnDetener.classList.add("oculto");
           el.btnSalir.disabled = true;
           el.btnProbar.disabled = false;
@@ -384,7 +491,7 @@
           el.btnAnalizar.disabled = false;
           el.btnComprobar.disabled = false;
           el.resumen.replaceChildren();
-          el.tabla.replaceChildren();
+          el.galeria.replaceChildren();
           el.estadoAnalisis.textContent = "";
           el.estadoSalir.textContent = "";
           marcarErrorDestino("");
@@ -492,7 +599,7 @@
                 (opciones.papelera ? "true" : "false"),
               fields:
                 "nextPageToken,files(id,name,size,mimeType,createdTime,ownedByMe," +
-                "owners(emailAddress))",
+                "owners(emailAddress),thumbnailLink)",
               pageSize: "1000",
             });
             if (pageToken) p.set("pageToken", pageToken);
@@ -523,7 +630,7 @@
           bloquearLecturas(true);
           el.estadoAnalisis.textContent = "Leyendo la carpeta…";
           el.resumen.replaceChildren();
-          el.tabla.classList.add("oculto");
+          el.galeriaCaja.classList.add("oculto");
           var sesion = estado.email;
 
           leerCarpeta({
@@ -647,6 +754,7 @@
               el.fechaDesde.value + ". El más reciente es del " + reciente +
               ". Cambia la fecha o bórrala para verlo todo.";
             el.panelTransferir.classList.add("oculto");
+            el.galeriaCaja.classList.add("oculto");
             return;
           }
 
@@ -676,7 +784,7 @@
               "Ningún archivo de este rango pertenece a " + estado.email +
               ", así que no hay nada que esta sesión pueda transferir. ¿Conectaste la cuenta correcta?";
             el.panelTransferir.classList.add("oculto");
-            el.tabla.classList.add("oculto");
+            el.galeriaCaja.classList.add("oculto");
             return;
           }
 
@@ -698,19 +806,107 @@
           }
           el.estadoAnalisis.textContent = texto;
 
-          var t = "<tr><th>Archivo</th><th>Creado</th><th class='num'>Peso</th><th>Estado</th></tr>";
-          estado.mios.slice(0, 200).forEach(function (f) {
-            t += "<tr class='mia'><td>" + txt(f.name) + "</td><td>" +
-              txt(String(f.createdTime).slice(0, 10)) + "</td><td class='num'>" +
-              tam(f.size) + "</td><td>" +
-              (estado.invitados[f.id] ? "Invitación enviada" : "Por transferir") + "</td></tr>";
-          });
-          if (estado.mios.length > 200) {
-            t += "<tr><td colspan='4'>… y " + (estado.mios.length - 200) + " más</td></tr>";
-          }
-          el.tabla.innerHTML = t;
-          el.tabla.classList.remove("oculto");
+          pintarGaleria();
           el.panelTransferir.classList.remove("oculto");
+        }
+
+        // Galeria de verificacion. Se construye con DOM y no con innerHTML a proposito: la
+        // URL de la miniatura viaja en un ATRIBUTO, y txt() no escapa comillas (solo sirve
+        // para texto). setAttribute no interpreta nada, asi que no hay forma de escaparse.
+        function pintarGaleria() {
+          el.galeria.replaceChildren();
+          estado.excluidos = {};
+
+          estado.mios.forEach(function (f) {
+            var item = document.createElement("label");
+            item.className = "mini";
+
+            var casilla = document.createElement("input");
+            casilla.type = "checkbox";
+            casilla.checked = true;
+            casilla.className = "mini-check";
+            casilla.addEventListener("change", function () {
+              if (casilla.checked) {
+                delete estado.excluidos[f.id];
+              } else {
+                estado.excluidos[f.id] = true;
+              }
+              item.classList.toggle("fuera", !casilla.checked);
+              actualizarSeleccion();
+            });
+
+            var marco = document.createElement("div");
+            marco.className = "mini-marco";
+
+            if (f.thumbnailLink) {
+              var img = document.createElement("img");
+              img.setAttribute("src", f.thumbnailLink);
+              img.setAttribute("loading", "lazy");
+              img.setAttribute("decoding", "async");
+              // Drive sirve las miniaturas desde otro dominio y rechaza peticiones con
+              // referer ajeno. Sin esto muchas vuelven vacias.
+              img.setAttribute("referrerpolicy", "no-referrer");
+              img.alt = "";
+              // Si la miniatura no carga hay que decirlo: un hueco en blanco se lee como
+              // "archivo corrupto" cuando en realidad solo fallo la vista previa.
+              img.addEventListener("error", function () {
+                marco.replaceChildren(marcador("Sin vista previa"));
+              });
+              marco.appendChild(img);
+            } else {
+              marco.appendChild(marcador("Sin vista previa"));
+            }
+
+            var nombre = document.createElement("span");
+            nombre.className = "mini-nombre";
+            nombre.textContent = f.name;
+            nombre.title = f.name;
+
+            var meta = document.createElement("span");
+            meta.className = "mini-meta";
+            meta.textContent = String(f.createdTime).slice(0, 10) + " · " + tam(f.size) +
+              (estado.invitados[f.id] ? " · ya invitado" : "");
+
+            item.append(casilla, marco, nombre, meta);
+            el.galeria.appendChild(item);
+          });
+
+          el.galeriaCaja.classList.remove("oculto");
+          actualizarSeleccion();
+        }
+
+        function marcador(texto) {
+          var d = document.createElement("div");
+          d.className = "mini-vacia";
+          d.textContent = texto;
+          return d;
+        }
+
+        function seleccionados() {
+          return estado.mios.filter(function (f) { return !estado.excluidos[f.id]; });
+        }
+
+        function actualizarSeleccion() {
+          var sel = seleccionados();
+          var bytes = sel.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
+          el.conteoSeleccion.textContent = sel.length === estado.mios.length
+            ? "Los " + sel.length + " archivos seleccionados (" + tam(bytes) + ")."
+            : sel.length + " de " + estado.mios.length + " seleccionados (" + tam(bytes) + ").";
+          // Durante un lote los botones siguen apagados pase lo que pase con las casillas:
+          // tocar una casilla no puede ser la forma de lanzar una segunda transferencia
+          // encima de la que ya corre.
+          var apagados = sel.length === 0 || estado.enLote;
+          el.btnTransferir.disabled = apagados;
+          el.btnProbar.disabled = apagados;
+        }
+
+        function marcarTodos(marcar) {
+          Array.prototype.forEach.call(el.galeria.querySelectorAll(".mini-check"), function (c) {
+            if (c.checked !== marcar) {
+              c.checked = marcar;
+              c.dispatchEvent(new Event("change"));
+            }
+          });
         }
 
         // ---- Paso 3: transferencia ----------------------------------------------------
@@ -746,9 +942,19 @@
             return;
           }
 
-          var candidatos = estado.mios.filter(function (f) { return !estado.invitados[f.id]; });
+          // Solo lo que sigue marcado en la galeria. Ese es el punto de la vista previa:
+          // que lo que se transfiere sea exactamente lo que se vio y se dejo marcado.
+          var elegidos = seleccionados();
+          if (elegidos.length === 0) {
+            el.estadoAnalisis.textContent = "No hay ningún archivo marcado en la galería.";
+            return;
+          }
+
+          var candidatos = elegidos.filter(function (f) { return !estado.invitados[f.id]; });
           if (candidatos.length === 0) {
-            candidatos = estado.mios.slice();
+            // Reintento sobre LO MARCADO, nunca sobre todo: lo que se desmarco en la galeria
+            // sigue fuera aunque el filtro de invitados deje la lista vacia.
+            candidatos = elegidos.slice();
             if (candidatos.length > 0 && !window.confirm(
               "Todos estos archivos ya tienen una invitación enviada. Si continúas se enviarán " +
               "invitaciones duplicadas. ¿Continuar de todos modos?"
@@ -815,8 +1021,9 @@
 
           function terminar() {
             estado.enLote = false;
-            el.btnProbar.disabled = false;
-            el.btnTransferir.disabled = false;
+            // Re-habilitar via la seleccion, no a mano: con cero marcados los botones deben
+            // seguir apagados aunque el lote haya terminado bien.
+            actualizarSeleccion();
             el.btnDetener.classList.add("oculto");
             bloquearLecturas(false);
             pintarProgreso(hechos, fallos, lote.length);

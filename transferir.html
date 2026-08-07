@@ -221,6 +221,7 @@
 
       .mini-meta.de-app { color: var(--ok); }
       .mini-meta.ajena { color: var(--aviso); }
+      .mini-meta.repetida { color: var(--acento); }
 
       .check-linea {
         display: flex;
@@ -279,7 +280,7 @@
         carpeta de CamToDrive.
         <!-- Sello de version a la vista: sin esto, "no se si cargo la nueva" no tiene respuesta
              posible desde el telefono. Subirlo en cada cambio de esta herramienta. -->
-        <br><span class="sello">Versión 4 · busca en todo el Drive</span>
+        <br><span class="sello">Versión 5 · compara con tu Drive</span>
       </p>
 
       <div class="panel aviso">
@@ -310,9 +311,27 @@
         </div>
       </section>
 
-      <!-- PASO 2: inventario -->
+      <!-- PASO 2: huella del Drive de destino, para no duplicar -->
+      <section class="panel oculto" id="panelHuella" aria-labelledby="t-huella">
+        <h2 id="t-huella" style="margin-top:0">2. Compara con tu Drive (para no duplicar)</h2>
+        <p class="sub" style="margin:0 0 12px">
+          Conéctate <strong>con tu propia cuenta</strong> y pulsa el botón: se guarda una huella
+          de tus imágenes en este navegador. Después cambias a la otra cuenta y la herramienta
+          marcará como repetido todo lo que ya tengas. La huella es sólo el tamaño y la firma
+          de cada archivo; no se guarda ninguna foto ni sale de este teléfono.
+        </p>
+        <p id="estadoHuella" role="status" aria-live="polite">
+          Todavía no hay huella: no se puede saber qué tienes repetido.
+        </p>
+        <div class="acciones">
+          <button id="btnHuella" type="button">Tomar la huella de esta cuenta</button>
+          <button id="btnBorrarHuella" type="button" class="oculto">Borrar la huella</button>
+        </div>
+      </section>
+
+      <!-- PASO 3: inventario -->
       <section class="panel oculto" id="panelAnalisis" aria-labelledby="t-analisis">
-        <h2 id="t-analisis" style="margin-top:0">2. Revisa qué hay</h2>
+        <h2 id="t-analisis" style="margin-top:0">3. Revisa qué hay</h2>
         <div class="fila">
           <div>
             <label for="fechaDesde">Sólo archivos creados desde (déjalo vacío para verlo todo)</label>
@@ -338,9 +357,9 @@
         </div>
       </section>
 
-      <!-- PASO 3: transferencia -->
+      <!-- PASO 4: transferencia -->
       <section class="panel oculto" id="panelTransferir" aria-labelledby="t-transferir">
-        <h2 id="t-transferir" style="margin-top:0">3. Transfiere</h2>
+        <h2 id="t-transferir" style="margin-top:0">4. Transfiere</h2>
         <div class="fila">
           <div>
             <label for="destino">Cuenta que debe quedar como propietaria</label>
@@ -395,9 +414,9 @@
         </div>
       </section>
 
-      <!-- PASO 4: salida de la carpeta -->
+      <!-- PASO 5: salida de la carpeta -->
       <section class="panel final oculto" id="panelSalir" aria-labelledby="t-salir">
-        <h2 id="t-salir" style="margin-top:0">4. Sacar esta cuenta de la carpeta</h2>
+        <h2 id="t-salir" style="margin-top:0">5. Sacar esta cuenta de la carpeta</h2>
         <p>
           Cuando ya no quede ningún archivo tuyo dentro, este botón quita tu acceso a la carpeta:
           desaparece de tu Drive y no vuelve a subir nada aquí por accidente.
@@ -430,6 +449,14 @@
         var CARPETA_MIME = "application/vnd.google-apps.folder";
         // Una comprobacion de "no queda nada mio" caduca: Drive puede cambiar por debajo.
         var VALIDEZ_COMPROBACION_MS = 120000;
+        var HUELLA_KEY = "camtodrive.huella";
+
+        // La huella del Drive de destino vive FUERA de `estado` a proposito. `estado` se
+        // borra entero al cambiar de cuenta, y aqui el objetivo es justo lo contrario:
+        // tomarla con una cuenta y usarla con otra. Por eso lleva grabado de quien es y se
+        // muestra siempre en pantalla: un dato que sobrevive al cambio de sesion tiene que
+        // decir a que sesion pertenece, o repetimos el error que origino esta herramienta.
+        var huella = null;
 
         var el = {};
         var estado = null;
@@ -464,7 +491,8 @@
           estado = estadoLimpio();
 
           [
-            "estadoConexion", "btnConectar", "btnCambiar", "panelAnalisis", "fechaDesde",
+            "estadoConexion", "btnConectar", "btnCambiar", "panelHuella", "estadoHuella",
+            "btnHuella", "btnBorrarHuella", "panelAnalisis", "fechaDesde",
             "btnAnalizar", "estadoAnalisis", "resumen", "galeriaCaja", "galeria",
             "conteoSeleccion", "btnTodos", "btnNinguno", "panelTransferir", "destino",
             "moverCaja", "mover",
@@ -475,6 +503,8 @@
 
           el.btnConectar.addEventListener("click", pedirToken);
           el.btnCambiar.addEventListener("click", pedirToken);
+          el.btnHuella.addEventListener("click", tomarHuella);
+          el.btnBorrarHuella.addEventListener("click", borrarHuella);
           el.btnAnalizar.addEventListener("click", analizar);
           el.btnTodos.addEventListener("click", function () { marcarTodos(true); });
           el.btnNinguno.addEventListener("click", function () { marcarTodos(false); });
@@ -497,6 +527,9 @@
               e.returnValue = "";
             }
           });
+
+          huella = cargarHuella();
+          pintarHuella();
 
           var cfg = config();
           if (Array.isArray(cfg.ALLOWED_EMAILS) && cfg.ALLOWED_EMAILS[0]) {
@@ -548,6 +581,7 @@
           estado = estadoLimpio();
           estado.cliente = cliente;
 
+          el.panelHuella.classList.add("oculto");
           el.panelAnalisis.classList.add("oculto");
           el.panelTransferir.classList.add("oculto");
           el.panelSalir.classList.add("oculto");
@@ -600,7 +634,11 @@
               el.estadoConexion.innerHTML =
                 'Conectado como <span class="cuenta ok">' + txt(estado.email) + "</span>" + txt(uso);
               el.btnCambiar.classList.remove("oculto");
+              el.panelHuella.classList.remove("oculto");
               el.panelAnalisis.classList.remove("oculto");
+              // Repintar aqui y no solo al arrancar: el aviso de "la huella es de esta misma
+              // cuenta" solo puede escribirse cuando ya se sabe quien esta conectado.
+              pintarHuella();
               el.panelSalir.classList.remove("oculto");
               log("Sesión verificada: " + estado.email, "info");
             })
@@ -669,7 +707,7 @@
                 (opciones.papelera ? "true" : "false"),
               fields:
                 "nextPageToken,files(id,name,size,mimeType,createdTime,ownedByMe," +
-                "owners(emailAddress),thumbnailLink,parents,appProperties)",
+                "owners(emailAddress),thumbnailLink,parents,appProperties,md5Checksum)",
               pageSize: "1000",
             });
             if (pageToken) p.set("pageToken", pageToken);
@@ -695,7 +733,150 @@
           el.btnComprobar.disabled = bloquear;
         }
 
-        // ---- Paso 2: inventario de solo lectura --------------------------------------
+        // ---- Paso 2: huella del Drive de destino --------------------------------------
+        // Que se guarda: por cada imagen, su md5 (la firma que da Drive) y un par
+        // "nombre|tamano". Nada mas. No se guarda ninguna imagen ni nada que permita
+        // reconstruirla, y no sale del navegador.
+        function cargarHuella() {
+          try {
+            var crudo = localStorage.getItem(HUELLA_KEY);
+            if (!crudo) return null;
+            var h = JSON.parse(crudo);
+            if (!h || !h.email || !Array.isArray(h.md5)) return null;
+            return h;
+          } catch (_e) {
+            // Un localStorage ilegible (bloqueado, lleno, corrupto) no puede tumbar la
+            // herramienta: se sigue sin huella, que es el estado por defecto.
+            return null;
+          }
+        }
+
+        function pintarHuella() {
+          if (!huella) {
+            el.estadoHuella.textContent =
+              "Todavía no hay huella: no se puede saber qué tienes repetido.";
+            el.btnBorrarHuella.classList.add("oculto");
+            return;
+          }
+
+          var texto = "Huella de " + huella.email + ": " + huella.n + " imágenes, tomada el " +
+            new Date(huella.fecha).toLocaleString() + ".";
+          // El caso peligroso: la huella es de la MISMA cuenta que esta conectada. Entonces
+          // todo saldria "repetido" porque cada archivo coincide consigo mismo, y quedaria
+          // todo desmarcado sin explicacion. Se dice, y no se aplica.
+          if (estado.email && huella.email === estado.email) {
+            texto += " Ojo: es de la cuenta que tienes conectada ahora, así que no sirve para " +
+              "comparar (todo coincidiría consigo mismo). Cambia de cuenta o bórrala.";
+          }
+          el.estadoHuella.textContent = texto;
+          el.btnBorrarHuella.classList.remove("oculto");
+        }
+
+        function huellaUtil() {
+          return !!(huella && huella.email !== estado.email);
+        }
+
+        function tomarHuella() {
+          if (!estado.email) return;
+          if (huella && huella.email !== estado.email && !window.confirm(
+            "Ya hay una huella de " + huella.email + ".\n\n" +
+            "Si sigues, se reemplaza por la de " + estado.email + ". ¿Continuar?"
+          )) return;
+
+          el.btnHuella.disabled = true;
+          el.estadoHuella.textContent = "Leyendo las imágenes de " + estado.email + "…";
+          var sesion = estado.email;
+
+          listarImagenesPropias(function (n) {
+            el.estadoHuella.textContent = "Leídas " + n + " imágenes de " + sesion + "…";
+          })
+            .then(function (fotos) {
+              if (sesion !== estado.email) return;  // cambio de cuenta a mitad: no vale
+
+              var md5 = [], pares = [];
+              fotos.forEach(function (f) {
+                if (f.md5Checksum) md5.push(f.md5Checksum);
+                if (f.name && f.size) pares.push(f.name + "|" + f.size);
+              });
+
+              huella = {
+                email: sesion,
+                fecha: Date.now(),
+                n: fotos.length,
+                md5: md5,
+                pares: pares,
+              };
+              try {
+                localStorage.setItem(HUELLA_KEY, JSON.stringify(huella));
+              } catch (_e) {
+                // Sin espacio en localStorage la huella sigue valiendo en esta pestana; lo
+                // unico que se pierde es que sobreviva a una recarga. Conviene decirlo.
+                log("La huella no se pudo guardar en el navegador: valdrá sólo hasta que " +
+                  "recargues la página.", "mal");
+                el.panelRegistro.classList.remove("oculto");
+              }
+              pintarHuella();
+              log("Huella tomada de " + sesion + ": " + fotos.length + " imágenes, " +
+                md5.length + " con firma.", "ok");
+              el.panelRegistro.classList.remove("oculto");
+            })
+            .catch(function (e) {
+              el.estadoHuella.textContent = "No se pudo tomar la huella: " + mensajeDe(e);
+            })
+            .then(function () { el.btnHuella.disabled = false; });
+        }
+
+        function borrarHuella() {
+          huella = null;
+          try { localStorage.removeItem(HUELLA_KEY); } catch (_e) { /* nada que hacer */ }
+          pintarHuella();
+        }
+
+        // Un archivo se da por repetido si su firma md5 coincide, o si coinciden nombre y
+        // tamano exacto. El md5 es la prueba de verdad (mismos bytes); el par nombre+tamano
+        // cubre a los que Drive no firma, y es lo bastante estrecho para estas fotos, que
+        // llevan la fecha y la hora al milisegundo en el nombre.
+        function esDuplicado(f) {
+          if (!huellaUtil()) return false;
+          if (f.md5Checksum && huella.md5.indexOf(f.md5Checksum) !== -1) return true;
+          if (f.name && f.size && huella.pares &&
+              huella.pares.indexOf(f.name + "|" + f.size) !== -1) return true;
+          return false;
+        }
+
+        // Todas las imagenes que ocupan el espacio de la cuenta conectada, esten donde esten.
+        // Lo usan la huella y la busqueda de rescate, que preguntan exactamente lo mismo.
+        function listarImagenesPropias(avance) {
+          var acumulado = [];
+
+          function pagina(pageToken) {
+            var p = new URLSearchParams({
+              q: "'me' in owners and trashed=false and mimeType contains 'image/'",
+              fields:
+                "nextPageToken,files(id,name,size,mimeType,createdTime,ownedByMe," +
+                "owners(emailAddress),thumbnailLink,parents,appProperties,md5Checksum)",
+              orderBy: "createdTime desc",
+              pageSize: "1000",
+            });
+            if (pageToken) p.set("pageToken", pageToken);
+
+            return api(FILES + "?" + p.toString())
+              .then(function (r) {
+                if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
+                return r.json();
+              })
+              .then(function (d) {
+                acumulado = acumulado.concat(d.files || []);
+                if (typeof avance === "function") avance(acumulado.length);
+                if (d.nextPageToken) return pagina(d.nextPageToken);
+                return acumulado;
+              });
+          }
+
+          return pagina(null);
+        }
+
+        // ---- Paso 3: inventario de solo lectura --------------------------------------
         function analizar() {
           bloquearLecturas(true);
           el.estadoAnalisis.textContent = "Leyendo la carpeta…";
@@ -775,37 +956,10 @@
         // Y no es solo un informe: lo que encuentra se puede transferir, porque el caso real
         // resulto ser justo este (la carpeta vacia y las fotos en otro sitio de su Drive).
         function buscarPorDueno() {
-          var acumulado = [];
-
-          function pagina(pageToken) {
-            var p = new URLSearchParams({
-              q: "'me' in owners and trashed=false and mimeType contains 'image/'",
-              // pageSize 1000 y paginacion de verdad. Con el tope de 100 anterior, "100
-              // imagenes" era indistinguible de "las primeras 100 de las que haya".
-              fields:
-                "nextPageToken,files(id,name,size,mimeType,createdTime,ownedByMe," +
-                "owners(emailAddress),thumbnailLink,parents,appProperties)",
-              orderBy: "createdTime desc",
-              pageSize: "1000",
-            });
-            if (pageToken) p.set("pageToken", pageToken);
-
-            return api(FILES + "?" + p.toString())
-              .then(function (r) {
-                if (!r.ok) return errorDe(r).then(function (m) { throw new Error(m); });
-                return r.json();
-              })
-              .then(function (d) {
-                acumulado = acumulado.concat(d.files || []);
-                el.estadoAnalisis.textContent =
-                  "Buscando en todo el Drive de " + estado.email + "… " + acumulado.length +
-                  " imágenes encontradas.";
-                if (d.nextPageToken) return pagina(d.nextPageToken);
-                return acumulado;
-              });
-          }
-
-          return pagina(null).then(function (fotos) {
+          return listarImagenesPropias(function (n) {
+            el.estadoAnalisis.textContent =
+              "Buscando en todo el Drive de " + estado.email + "… " + n + " imágenes encontradas.";
+          }).then(function (fotos) {
             if (fotos.length === 0) {
               log("Esta cuenta no tiene ninguna imagen propia en su Drive.", "ok");
               el.estadoAnalisis.textContent =
@@ -834,6 +988,18 @@
                   "seleccionadas; el resto son fotos suyas y quedan sin marcar."
                 : " Ninguna lleva la marca de CamToDrive, así que ninguna viene seleccionada: " +
                   "marca a mano sólo lo que de verdad sea tuyo.";
+
+              if (huellaUtil()) {
+                var repes = fotos.filter(esDuplicado);
+                var bytesRepes = repes.reduce(function (s, f) { return s + Number(f.size || 0); }, 0);
+                texto += repes.length > 0
+                  ? " Comparando con " + huella.email + ": " + repes.length + " (" +
+                    tam(bytesRepes) + ") ya las tienes allí y quedan desmarcadas."
+                  : " Comparando con " + huella.email + ": ninguna está repetida.";
+              } else {
+                texto += " Sin huella de tu Drive no se puede saber cuáles ya tienes " +
+                  "(paso 2).";
+              }
               el.estadoAnalisis.textContent = texto;
 
               resumenPorCarpeta(fotos);
@@ -884,18 +1050,20 @@
           var porCarpeta = {};
           fotos.forEach(function (f) {
             var c = carpetaDe(f);
-            if (!porCarpeta[c]) porCarpeta[c] = { n: 0, bytes: 0, app: 0 };
+            if (!porCarpeta[c]) porCarpeta[c] = { n: 0, bytes: 0, app: 0, rep: 0 };
             porCarpeta[c].n += 1;
             porCarpeta[c].bytes += Number(f.size || 0);
             if (esDeLaApp(f)) porCarpeta[c].app += 1;
+            if (esDuplicado(f)) porCarpeta[c].rep += 1;
           });
 
           var html = "<h2>Dónde están esas imágenes</h2><div class='tabla-scroll'><table><tr>" +
             "<th>Carpeta</th><th class='num'>Imágenes</th><th class='num'>De CamToDrive</th>" +
-            "<th class='num'>Peso</th></tr>";
+            "<th class='num'>Ya en tu Drive</th><th class='num'>Peso</th></tr>";
           Object.keys(porCarpeta).forEach(function (c) {
             html += "<tr><td>" + txt(c) + "</td><td class='num'>" + porCarpeta[c].n +
               "</td><td class='num'>" + porCarpeta[c].app + "</td><td class='num'>" +
+              (huellaUtil() ? porCarpeta[c].rep : "—") + "</td><td class='num'>" +
               tam(porCarpeta[c].bytes) + "</td></tr>";
           });
           html += "</table></div>";
@@ -960,6 +1128,14 @@
               " archivos tuyos fuera del filtro de fecha. Borra la fecha para incluirlos todos.";
           }
 
+          if (huellaUtil()) {
+            var repetidas = estado.mios.filter(esDuplicado);
+            if (repetidas.length > 0) {
+              texto += " " + repetidas.length + " ya están en el Drive de " + huella.email +
+                " y quedan desmarcadas.";
+            }
+          }
+
           var pendientes = estado.mios.filter(function (f) { return estado.invitados[f.id]; });
           if (pendientes.length > 0) {
             texto += " De ellos, " + pendientes.length + " ya tienen invitación enviada y sólo " +
@@ -987,7 +1163,10 @@
             var item = document.createElement("label");
             item.className = "mini";
 
-            var marcar = hayMarca ? esDeLaApp(f) : !estado.fueraDeCarpeta;
+            // Un repetido nunca viene marcado, lleve la marca de la app o no: transferirlo
+            // solo añadiria una segunda copia del mismo contenido al Drive de destino.
+            var repetido = esDuplicado(f);
+            var marcar = !repetido && (hayMarca ? esDeLaApp(f) : !estado.fueraDeCarpeta);
             if (!marcar) {
               estado.excluidos[f.id] = true;
               item.classList.add("fuera");
@@ -1042,8 +1221,11 @@
             // Origen: de donde salio la foto y en que carpeta vive. Sin esto, "no
             // transferirlos mal" depende de reconocer 100 miniaturas de memoria.
             var origen = document.createElement("span");
-            origen.className = "mini-meta origen " + (esDeLaApp(f) ? "de-app" : "ajena");
-            origen.textContent = (esDeLaApp(f) ? "CamToDrive" : "No es de la app") +
+            origen.className = "mini-meta origen " +
+              (repetido ? "repetida" : esDeLaApp(f) ? "de-app" : "ajena");
+            origen.textContent = (repetido
+              ? "Ya está en tu Drive"
+              : esDeLaApp(f) ? "CamToDrive" : "No es de la app") +
               (estado.fueraDeCarpeta ? " · " + carpetaDe(f) : "");
             origen.title = origen.textContent;
 
@@ -1089,7 +1271,7 @@
           });
         }
 
-        // ---- Paso 3: transferencia ----------------------------------------------------
+        // ---- Paso 4: transferencia ----------------------------------------------------
         function marcarErrorDestino(mensaje) {
           el.destinoError.textContent = mensaje;
           if (mensaje) {
@@ -1327,7 +1509,7 @@
             });
         }
 
-        // ---- Paso 4: dejar de ocupar espacio y salir de la carpeta --------------------
+        // ---- Paso 5: dejar de ocupar espacio y salir de la carpeta --------------------
         //
         // Salir es irreversible desde esta sesion: si quedara un solo archivo propio dentro,
         // ya no habria forma de cederlo (solo el dueno puede, y perderia el acceso). Por eso
